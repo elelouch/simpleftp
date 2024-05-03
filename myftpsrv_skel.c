@@ -4,10 +4,13 @@
 #include <string.h>
 #include <stdbool.h>
 #include <stdarg.h>
+#include <sys/socket.h>
 #include <unistd.h>
 #include <err.h>
 
 #include <netinet/in.h>
+
+#include <netdb.h>
 
 #define BUFSIZE 512
 #define CMDSIZE 4
@@ -207,24 +210,56 @@ int main (int argc, char *argv[]) {
 
     // arguments checking
     if (argc < 2) {
-        errx(1, "Port expected as argument");
-    } else if (argc > 2) {
-        errx(1, "Too many arguments");
+        fprintf(stderr, "Port expected as argument. \nUsage ftpsrv <port_number>");
+        return 1;
+    } 
+
+    if (argc > 2) {
+        fprintf(stderr, "Too many arguments. \nUsage : ftpsrv <port_number>");
+        return 1;
     }
 
     // reserve sockets and variables space
     int master_sd, slave_sd;
-    struct sockaddr_in master_addr, slave_addr;
+    //struct sockaddr_in master_addr, slave_addr; // bg net
+    struct addrinfo hints;
+    struct addrinfo* service_info;
+    int status;
+    char* addrinfo_error;
+    int bind_status;
 
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_PASSIVE; // bind to the current host address
+
+    // getaddrinfo does the domain lookup (e.g DNS, NSS) and prepare 
+    // the useful structs that reside on the addrinfo struct.
+    status = getaddrinfo("127.0.0.1", argv[1], &hints, &service_info);
+    if(status){
+        fprintf(stderr, "addrinfo error : %s\n", gai_strerror(status));
+        return 2;
+    }
+    
     // create server socket and check errors
+    master_sd = socket(service_info->ai_family, service_info->ai_socktype, service_info->ai_protocol);
+    if(master_sd < 0) {
+        perror("master, error while opening socket");
+        return 1;
+    }
     
     // bind master socket and check errors
+    bind_status = bind(master_sd, service_info->ai_addr, service_info->ai_addrlen);
+    if(bind_status < 0) {
+        perror("master, error while binding socket");
+        return 1;
+    }
 
     // make it listen
 
     // main loop
     while (true) {
-        // accept connectiones sequentially and check errors
+        // accept connections sequentially and check errors
 
         // send hello
 
