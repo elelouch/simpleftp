@@ -206,8 +206,8 @@ void operate(int sd) {
 int main (int argc, char *argv[]) {
 
     // arguments checking
-    if (argc < 2) {
-        errx(1, "Port expected as argument");
+    if (argc < 3) {
+        errx(1, "Dir and port expected as argument\n");
     } else if (argc > 2) {
         errx(1, "Too many arguments");
     }
@@ -215,8 +215,9 @@ int main (int argc, char *argv[]) {
     // reserve sockets and variables space
     int master_sd, slave_sd;
     struct sockaddr_in master_addr, slave_addr;
-
+    master_addr.sin_port = htons(atoi
     // create server socket and check errors
+
     
     // bind master socket and check errors
 

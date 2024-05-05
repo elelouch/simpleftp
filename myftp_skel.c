@@ -3,6 +3,7 @@
 
 #include <string.h>
 #include <stdbool.h>
+#include <sys/socket.h>
 #include <unistd.h>
 #include <err.h>
 
@@ -25,7 +26,6 @@ bool recv_msg(int sd, int code, char *text) {
     int recv_s, recv_code;
 
     // receive the answer
-
 
     // error checking
     if (recv_s < 0) warn("error receiving data");
@@ -185,19 +185,55 @@ void operate(int sd) {
  **/
 int main (int argc, char *argv[]) {
     int sd;
+    int bind_status;
+    int connect_status;
+    int port = atoi(argv[2]);
+    char* host = argv[1];
     struct sockaddr_in addr;
+    char buffer[BUFSIZE];
 
     // arguments checking
+    if(argc != 3) {
+        fprintf(stderr,"Usage : ftpclient <host> <port>\n");
+        return 2;
+    }
 
     // create socket and check for errors
-    
+    sd = socket(PF_INET,SOCK_STREAM,IPPROTO_TCP); // ipv4, tipo de socket tcp, protocolo tcp
+    if(!sd) {
+        perror("socket");
+        return 2;
+    }
+
     // set socket data    
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = inet_addr(host); 
+    memset(addr.sin_zero,'\0',sizeof addr.sin_zero);
 
     // connect and check for errors
+    bind_status = !bind(sd,(struct sockaddr *)&addr, sizeof addr);
+    if(bind_status){
+        perror("bind");
+        close(sd);
+        return 2;
+    }
 
-    // if receive hello proceed with authenticate and operate if not warning
+    connect_status = !connect(sd, (struct sockaddr *)&addr, sizeof addr);
+    if(!connect_status){
+        perror("connect");
+        close(sd);
+        return 2;
+    }
 
+    // if receive hello proceed with authenticate and operate. if not, warn
+    read(sd, buffer, BUFSIZE);
+    if(strstr(buffer, "Hello")){
+        authenticate(sd);
+    }
+    
     // close socket
+    close(sd);
 
     return 0;
 }
