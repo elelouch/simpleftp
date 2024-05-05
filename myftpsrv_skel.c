@@ -1,17 +1,22 @@
-#include <stdio.h>
+#include <arpa/inet.h>
+#include <asm-generic/socket.h>
+#include <stdint.h>
 #include <stdlib.h>
-
-#include <string.h>
+#include "tcp_utils.h"
 #include <stdbool.h>
 #include <stdarg.h>
-#include <unistd.h>
 #include <err.h>
 
 #include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include "tcp_utils.h"
 
 #define BUFSIZE 512
 #define CMDSIZE 4
 #define PARSIZE 100
+#define BACKLOG_SIZE 128
 
 #define MSG_220 "220 srvFtp version 1.0\r\n"
 #define MSG_331 "331 Password required for %s\r\n"
@@ -22,6 +27,7 @@
 #define MSG_299 "299 File %s size %ld bytes\r\n"
 #define MSG_226 "226 Transfer complete\r\n"
 
+void handle_conn(int, int);
 /**
  * function: receive the commands from the client
  * sd: socket descriptor
@@ -49,18 +55,17 @@ bool recv_cmd(int sd, char *operation, char *param) {
     // extract command receive in operation if not set \0
     // extract parameters of the operation in param if it needed
     token = strtok(buffer, " ");
-    if (token == NULL || strlen(token) < 4) {
+    if (!token || strlen(token) < 4) {
         warn("not valid ftp command");
         return false;
-    } else {
-        if (operation[0] == '\0') strcpy(operation, token);
-        if (strcmp(operation, token)) {
-            warn("abnormal client flow: did not send %s command", operation);
-            return false;
-        }
-        token = strtok(NULL, " ");
-        if (token != NULL) strcpy(param, token);
+    } 
+    if (operation[0] == '\0') strcpy(operation, token);
+    if (strcmp(operation, token)) {
+        warn("abnormal client flow: did not send %s command", operation);
+        return false;
     }
+    token = strtok(NULL, " ");
+    if (token) strcpy(param, token);
     return true;
 }
 
@@ -82,9 +87,7 @@ bool send_ans(int sd, char *message, ...){
     va_end(args);
     // send answer preformated and check errors
 
-
-
-
+    return false;
 }
 
 /**
@@ -128,7 +131,8 @@ bool check_credentials(char *user, char *pass) {
     sprintf(credentials, "%s:%s", user, pass);
 
     // check if ftpusers file it's present
-    if ((file = fopen(path, "r"))==NULL) {
+    file = fopen(path, "r");
+    if (!file) {
         warn("Error opening %s", path);
         return false;
     }
@@ -136,7 +140,7 @@ bool check_credentials(char *user, char *pass) {
     // search for credential string
     while (getline(&line, &line_size, file) != -1) {
         strtok(line, "\n");
-        if (strcmp(line, credentials) == 0) {
+        if (!strcmp(line, credentials)) {
             found = true;
             break;
         }
@@ -168,6 +172,7 @@ bool authenticate(int sd) {
     // if credentials don't check denied login
 
     // confirm login
+    return 0;
 }
 
 /**
@@ -190,11 +195,10 @@ void operate(int sd) {
 
 
 
-
             break;
         } else {
             // invalid command
-            // furute use
+            // future use
         }
     }
 }
@@ -204,35 +208,63 @@ void operate(int sd) {
  *         ./mysrv <SERVER_PORT>
  **/
 int main (int argc, char *argv[]) {
+    int master_sd = 0, slave_sd = 0;
+    int port = 0;
+    socklen_t slave_addrlen = 0;
+    struct sockaddr_in master_addr, slave_addr;
 
     // arguments checking
-    if (argc < 3) {
-        errx(1, "Dir and port expected as argument\n");
-    } else if (argc > 2) {
-        errx(1, "Too many arguments");
+    if (argc != 2) {
+        fprintf(stderr, "Usage : ftpserv <port>");
+        return 2;
+    } 
+
+    port = atoi(argv[1]);
+    if (port < 1024) {
+        fprintf(stderr,"Port number must be higher or equal than 1024\n");
+        return 1;
     }
 
-    // reserve sockets and variables space
-    int master_sd, slave_sd;
-    struct sockaddr_in master_addr, slave_addr;
-    master_addr.sin_port = htons(atoi
-    // create server socket and check errors
+    master_sd = init_sockaddr_in(NULL, port, &slave_addr); // muere aca
+    if(master_sd == -1) {
+        return 1;
+    }
 
-    
-    // bind master socket and check errors
 
-    // make it listen
+    if (listen(master_sd,BACKLOG_SIZE) == -1) {
+        perror("listen");
+        return 1;
+    }
 
-    // main loop
-    while (true) {
-        // accept connectiones sequentially and check errors
-
-        // send hello
-
+    for(;;) {
+        // accept connections sequentially and check errors
+        slave_sd = accept(master_sd, (struct sockaddr*) &slave_addr, &slave_addrlen);
+        handle_conn(slave_sd, master_sd);
         // operate only if authenticate is true
     }
 
     // close server socket
+    close(master_sd);
 
     return 0;
+}
+
+void handle_conn(int slave_sd, int master_sd) {
+    if(slave_sd == -1)
+        return;
+
+    // send hello
+    if(!fork()){
+        close(master_sd);
+        if(send(slave_sd, "Hello world", 13, 0) == -1) {
+            perror("send hello");
+            exit(1);
+        }
+        if(!authenticate(slave_sd))
+            exit(1);
+        
+        operate(slave_sd);
+        close(slave_sd);
+        exit(0);
+    }
 }

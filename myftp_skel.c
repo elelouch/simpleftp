@@ -6,6 +6,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <err.h>
+#include "tcp_utils.h"
 
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -37,7 +38,7 @@ bool recv_msg(int sd, int code, char *text) {
     // optional copy of parameters
     if(text) strcpy(text, message);
     // boolean test for the code
-    return (code == recv_code) ? true : false;
+    return code == recv_code;
 }
 
 /**
@@ -63,7 +64,7 @@ void send_msg(int sd, char *operation, char *param) {
  * function: simple input from keyboard
  * return: input without ENTER key
  **/
-char * read_input() {
+char* read_input() {
     char *input = malloc(BUFSIZE);
     if (fgets(input, BUFSIZE, stdin)) {
         return strtok(input, "\n");
@@ -158,7 +159,7 @@ void operate(int sd) {
     while (true) {
         printf("Operation: ");
         input = read_input();
-        if (input == NULL)
+        if (!input)
             continue; // avoid empty input
         op = strtok(input, " ");
         // free(input);
@@ -185,7 +186,6 @@ void operate(int sd) {
  **/
 int main (int argc, char *argv[]) {
     int sd;
-    int bind_status;
     int connect_status;
     int port = atoi(argv[2]);
     char* host = argv[1];
@@ -197,40 +197,29 @@ int main (int argc, char *argv[]) {
         fprintf(stderr,"Usage : ftpclient <host> <port>\n");
         return 2;
     }
+    host = argv[1];
+    port = atoi(argv[2]);
 
     // create socket and check for errors
-    sd = socket(PF_INET,SOCK_STREAM,IPPROTO_TCP); // ipv4, tipo de socket tcp, protocolo tcp
-    if(!sd) {
-        perror("socket");
-        return 2;
+    if(init_sockaddr_in(host,port, &addr) == - 1) {
+        return 1;
     }
-
-    // set socket data    
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(port);
-    addr.sin_addr.s_addr = inet_addr(host); 
-    memset(addr.sin_zero,'\0',sizeof addr.sin_zero);
-
+    
     // connect and check for errors
-    bind_status = !bind(sd,(struct sockaddr *)&addr, sizeof addr);
-    if(bind_status){
-        perror("bind");
-        close(sd);
-        return 2;
-    }
-
-    connect_status = !connect(sd, (struct sockaddr *)&addr, sizeof addr);
-    if(!connect_status){
+    if(connect(sd, (struct sockaddr *)&addr, sizeof addr) == -1){
         perror("connect");
         close(sd);
         return 2;
     }
 
     // if receive hello proceed with authenticate and operate. if not, warn
-    read(sd, buffer, BUFSIZE);
-    if(strstr(buffer, "Hello")){
-        authenticate(sd);
+    recv(sd, buffer, BUFSIZE, 0);
+    if(!strstr(buffer, "Hello")){
+        fprintf(stderr, "Error: Hello not received\n");
+        close(sd);
+        return 2;
     }
+    authenticate(sd);
     
     // close socket
     close(sd);
