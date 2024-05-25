@@ -1,6 +1,7 @@
 #include <arpa/inet.h>
 #include <asm-generic/socket.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include "tcp_utils.h"
 #include <stdbool.h>
@@ -10,8 +11,12 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <netdb.h>
+#include <signal.h>
+#include <sys/wait.h>
+#include <errno.h>
 
-#include "tcp_utils.h"
+// #include "tcp_utils.h"
 
 #define BUFSIZE 512
 #define CMDSIZE 4
@@ -203,53 +208,123 @@ void operate(int sd) {
     }
 }
 
+
+void sigchld_handler(int sig)
+{
+    int saved_errno = errno;
+    while(waitpid(-1, NULL, WNOHANG) > 0);
+    errno = saved_errno;
+}
+
+void* get_in_addr(struct sockaddr* addr) {
+    if(addr->sa_family == AF_INET) {
+        return &((struct sockaddr_in*) addr)->sin_addr;
+    }
+    return &((struct sockaddr_in6*) addr)->sin6_addr;
+}
+
 /**
  * Run with
  *         ./mysrv <SERVER_PORT>
  **/
-int main (int argc, char *argv[]) {
-    int master_sd = 0, slave_sd = 0;
-    int port = 0;
+int main (int argc, char *argv[])
+{
+    int master_sd = 0, slave_sd = 0, yes = 1, rv = 0, pid = 0;
+    char* port = 0;
+    struct sigaction sa;
+    struct sockaddr_storage their_addr; // connector address information (big enough)
     socklen_t slave_addrlen = 0;
-    struct sockaddr_in master_addr, slave_addr;
+    struct addrinfo *servinfo, *p, hints;
+    socklen_t sin_size;
+    char dst[INET6_ADDRSTRLEN];
+    char message[] = "Hello, world!\n";
+    int message_length = sizeof message / sizeof (char);
 
-    // arguments checking
-    if (argc != 2) {
-        fprintf(stderr, "Usage : ftpserv <port>");
-        return 2;
-    } 
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_flags = AI_PASSIVE;
+    hints.ai_socktype = SOCK_STREAM;
 
-    port = atoi(argv[1]);
-    if (port < 1024) {
-        fprintf(stderr,"Port number must be higher or equal than 1024\n");
+    if(argc != 2) {
+        fprintf(stderr, "Usage mysrv <server_port>");
         return 1;
     }
+    port = argv[1];
 
-    master_sd = init_sockaddr_in(NULL, port, &slave_addr); // muere aca
-    if(master_sd == -1) {
+    if((rv = getaddrinfo(NULL,port, &hints, &servinfo)) != 0){
+        fprintf(stderr,"Could not get any address, getaddrinfo: %s\n",gai_strerror(rv));
         return 1;
     }
+    for((p = servinfo); p != NULL; p = p->ai_next){
+        master_sd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+        if(master_sd == -1){
+            perror("socket");
+            continue;
+        }
 
+        if(setsockopt(master_sd, SOL_SOCKET, SO_REUSEADDR, &yes, p->ai_addrlen) == -1){
+            perror("setsockopt");
+            exit(1);
+        }
 
-    if (listen(master_sd,BACKLOG_SIZE) == -1) {
+        if(bind(master_sd, p->ai_addr, p->ai_addrlen) == -1) {
+            perror("bind"); // we'll try with the next one
+            close(master_sd);
+            continue;
+        }
+        break;
+    }
+
+    freeaddrinfo(servinfo);
+    if(p == NULL) {
+        fprintf(stderr, "Couldn't bind any address\n");
+        exit(1);
+    }
+
+    if(listen(master_sd, 10) == -1){
         perror("listen");
-        return 1;
+        close(master_sd);
+        exit(1);
     }
 
+    sa.sa_handler = sigchld_handler;
+    sigemptyset(&sa.sa_mask); // empties all the signals of the mask
+    sa.sa_flags = SA_RESTART;
+    if(sigaction(SIGCHLD, &sa, NULL) == -1){
+        perror("sigaction");
+        exit(1);
+    }
+
+
+    printf("Server waiting for connection ...\n");
     for(;;) {
-        // accept connections sequentially and check errors
-        slave_sd = accept(master_sd, (struct sockaddr*) &slave_addr, &slave_addrlen);
-        handle_conn(slave_sd, master_sd);
-        // operate only if authenticate is true
+        sin_size = sizeof their_addr;
+        slave_sd = accept(master_sd, (struct sockaddr*) &their_addr, &sin_size);
+        if(slave_sd == -1) {
+            perror("accept");
+            close(master_sd);
+            exit(1);
+        }
+        inet_ntop(their_addr.ss_family, get_in_addr((struct sockaddr*) &their_addr), dst, sin_size);
+        printf("received connection from address %s\n", dst);
+
+        if(!fork()) {
+            close(master_sd); // closes mastersd just for child
+            if(send(slave_sd, message, message_length, 0) == -1) {
+                perror("send");
+            }
+            close(slave_sd);
+            exit(0);
+        }
+        close(slave_sd);
     }
 
-    // close server socket
-    close(master_sd);
-
+    
     return 0;
 }
 
 void handle_conn(int slave_sd, int master_sd) {
+    char hello[] = "hello";
     if(slave_sd == -1)
         return;
 
@@ -260,11 +335,11 @@ void handle_conn(int slave_sd, int master_sd) {
             perror("send hello");
             exit(1);
         }
-        if(!authenticate(slave_sd))
-            exit(1);
-        
-        operate(slave_sd);
-        close(slave_sd);
+
+        //if(!authenticate(slave_sd))
+        //    exit(1);
+        //
+        //operate(slave_sd);
         exit(0);
     }
 }
