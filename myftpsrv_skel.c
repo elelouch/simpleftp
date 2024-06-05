@@ -3,7 +3,6 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include "tcp_utils.h"
 #include <stdbool.h>
 #include <stdarg.h>
 #include <err.h>
@@ -15,6 +14,7 @@
 #include <signal.h>
 #include <sys/wait.h>
 #include <errno.h>
+#include <string.h>
 
 // #include "tcp_utils.h"
 
@@ -22,6 +22,7 @@
 #define CMDSIZE 4
 #define PARSIZE 100
 #define BACKLOG_SIZE 128
+#define IPV6_LEN 128
 
 #define MSG_220 "220 srvFtp version 1.0\r\n"
 #define MSG_331 "331 Password required for %s\r\n"
@@ -32,7 +33,7 @@
 #define MSG_299 "299 File %s size %ld bytes\r\n"
 #define MSG_226 "226 Transfer complete\r\n"
 
-void handle_conn(int, int);
+void handle_connection(int, int);
 /**
  * function: receive the commands from the client
  * sd: socket descriptor
@@ -230,112 +231,65 @@ void* get_in_addr(struct sockaddr* addr) {
 int main (int argc, char *argv[])
 {
     int master_sd = 0, slave_sd = 0, yes = 1, rv = 0, pid = 0;
-    char* port = 0;
+    in_port_t port;
     struct sigaction sa;
-    struct sockaddr_storage their_addr; // connector address information (big enough)
-    socklen_t slave_addrlen = 0;
-    struct addrinfo *servinfo, *p, hints;
-    socklen_t sin_size;
-    char dst[INET6_ADDRSTRLEN];
-    char message[] = "Hello, world!\n";
-    int message_length = sizeof message / sizeof (char);
-
-    memset(&hints, 0, sizeof hints);
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_flags = AI_PASSIVE;
-    hints.ai_socktype = SOCK_STREAM;
+    struct sockaddr_in srv_addr;
+    struct sockaddr_storage cli_addr; // connector address information (big enough)
+    socklen_t cli_size = sizeof cli_addr;
 
     if(argc != 2) {
-        fprintf(stderr, "Usage mysrv <server_port>");
+        fprintf(stderr, "Usage: mysrv <server_port>");
         return 1;
     }
-    port = argv[1];
 
-    if((rv = getaddrinfo(NULL,port, &hints, &servinfo)) != 0){
-        fprintf(stderr,"Could not get any address, getaddrinfo: %s\n",gai_strerror(rv));
+    port = htons(atoi(argv[1]));
+    srv_addr.sin_family = AF_INET;
+    srv_addr.sin_port = port;
+    srv_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    memset(srv_addr.sin_zero, '\0', sizeof srv_addr.sin_zero);
+
+    master_sd = socket(AF_INET, SOCK_STREAM, 0);
+    if(master_sd == -1) {
+        perror("socket");
         return 1;
     }
-    for((p = servinfo); p != NULL; p = p->ai_next){
-        master_sd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
-        if(master_sd == -1){
-            perror("socket");
-            continue;
-        }
 
-        if(setsockopt(master_sd, SOL_SOCKET, SO_REUSEADDR, &yes, p->ai_addrlen) == -1){
-            perror("setsockopt");
-            exit(1);
-        }
-
-        if(bind(master_sd, p->ai_addr, p->ai_addrlen) == -1) {
-            perror("bind"); // we'll try with the next one
-            close(master_sd);
-            continue;
-        }
-        break;
-    }
-
-    freeaddrinfo(servinfo);
-    if(p == NULL) {
-        fprintf(stderr, "Couldn't bind any address\n");
-        exit(1);
+    if(bind(master_sd, (struct sockaddr*) &srv_addr, sizeof srv_addr) == -1) {
+        perror("bind");
+        return 1;
     }
 
     if(listen(master_sd, 10) == -1){
         perror("listen");
         close(master_sd);
-        exit(1);
+        return 1;
     }
+    printf("Server waiting for connection...\n");
 
-    sa.sa_handler = sigchld_handler;
-    sigemptyset(&sa.sa_mask); // empties all the signals of the mask
-    sa.sa_flags = SA_RESTART;
-    if(sigaction(SIGCHLD, &sa, NULL) == -1){
-        perror("sigaction");
-        exit(1);
-    }
-
-
-    printf("Server waiting for connection ...\n");
     for(;;) {
-        sin_size = sizeof their_addr;
-        slave_sd = accept(master_sd, (struct sockaddr*) &their_addr, &sin_size);
-        if(slave_sd == -1) {
-            perror("accept");
-            close(master_sd);
-            exit(1);
-        }
-        inet_ntop(their_addr.ss_family, get_in_addr((struct sockaddr*) &their_addr), dst, sin_size);
-        printf("received connection from address %s\n", dst);
-
-        if(!fork()) {
-            close(master_sd); // closes mastersd just for child
-            if(send(slave_sd, message, message_length, 0) == -1) {
-                perror("send");
-            }
-            close(slave_sd);
-            exit(0);
-        }
-        close(slave_sd);
+        slave_sd = accept(master_sd, (struct sockaddr*) &cli_addr, &cli_size);
+        handle_connection(slave_sd, master_sd);
     }
+    close(slave_sd);
 
-    
     return 0;
 }
 
-void handle_conn(int slave_sd, int master_sd) {
-    char hello[] = "hello";
-    if(slave_sd == -1)
+void handle_connection(int slave_sd, int master_sd) {
+    if(slave_sd == -1){
+        perror("Accept");
         return;
-
-    // send hello
-    if(!fork()){
+    }
+    printf("Received connection!");
+    if(!fork()){ // if process is a child
         close(master_sd);
+        // send message
         if(send(slave_sd, "Hello world", 13, 0) == -1) {
             perror("send hello");
             exit(1);
         }
 
+        close(slave_sd);
         //if(!authenticate(slave_sd))
         //    exit(1);
         //
