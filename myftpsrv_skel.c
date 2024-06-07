@@ -3,7 +3,6 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdbool.h>
 #include <stdarg.h>
 #include <err.h>
 
@@ -46,7 +45,7 @@ void handle_connection(int, int);
  *             you can check if you receive first USER
  *             and then check if you receive PASS
  **/
-bool recv_cmd(int sd, char *operation, char *param) {
+int recv_cmd(int sd, char *operation, char *param) {
     char buffer[BUFSIZE], *token;
     int recv_s;
 
@@ -62,17 +61,17 @@ bool recv_cmd(int sd, char *operation, char *param) {
     // extract parameters of the operation in param if it needed
     token = strtok(buffer, " ");
     if (!token || strlen(token) < 4) {
-        warn("not valid ftp command");
-        return false;
+        fprintf(stderr, "Not a valid ftp command\n");
+        return 0;
     } 
     if (operation[0] == '\0') strcpy(operation, token);
     if (strcmp(operation, token)) {
-        warn("abnormal client flow: did not send %s command", operation);
-        return false;
+        fprintf(stderr, "Abnormal client flow: did not send %s command\n", operation);
+        return 0;
     }
     token = strtok(NULL, " ");
     if (token) strcpy(param, token);
-    return true;
+    return 1;
 }
 
 /**
@@ -83,7 +82,7 @@ bool recv_cmd(int sd, char *operation, char *param) {
  * return: true if not problem arise or else
  * notes: the MSG_x have preformated for these use
  **/
-bool send_ans(int sd, char *message, ...){
+int send_ans(int sd, char *message, ...){
     char buffer[BUFSIZE];
 
     va_list args;
@@ -93,7 +92,7 @@ bool send_ans(int sd, char *message, ...){
     va_end(args);
     // send answer preformated and check errors
 
-    return false;
+    return 0;
 }
 
 /**
@@ -127,11 +126,11 @@ void retr(int sd, char *file_path) {
  * pass: user password
  * return: true if found or false if not
  **/
-bool check_credentials(char *user, char *pass) {
+int check_credentials(char *user, char *pass) {
     FILE *file;
     char *path = "./ftpusers", *line = NULL, credentials[100];
     size_t line_size = 0;
-    bool found = false;
+    int found = 0;
 
     // make the credential string
     sprintf(credentials, "%s:%s", user, pass);
@@ -140,14 +139,14 @@ bool check_credentials(char *user, char *pass) {
     file = fopen(path, "r");
     if (!file) {
         warn("Error opening %s", path);
-        return false;
+        return 0;
     }
 
     // search for credential string
     while (getline(&line, &line_size, file) != -1) {
         strtok(line, "\n");
         if (!strcmp(line, credentials)) {
-            found = true;
+            found = 1;
             break;
         }
     }
@@ -165,20 +164,34 @@ bool check_credentials(char *user, char *pass) {
  * sd: socket descriptor
  * return: true if login is succesfully, false if not
  **/
-bool authenticate(int sd) {
-    char user[PARSIZE], pass[PARSIZE];
+int authenticate(int sd) {
+    char user[PARSIZE], pass[PARSIZE], response[PARSIZE];
 
+    // remember to check for errors and exit if anything happens
     // wait to receive USER action
+    do {
+        recv(sd, response, PARSIZE, 0);
+        printf("%s\n", response);
+    } while(strcmp(response, "USER"));
 
+    send(sd, "User: ", strlen("User: "), 0);
+    recv(sd, user, PARSIZE, 0);
 
-    // ask for password
+    do {
+        recv(sd, response, PARSIZE, 0);
+    } while(strcmp(response, "PASS"));
 
+    recv(sd, pass, PARSIZE, 0);
     // wait to receive PASS action
 
     // if credentials don't check denied login
-
+    if(!check_credentials(user, pass)) { 
+       send(sd, MSG_530, strlen(MSG_530), 0);
+       return 0;
+    }
+    send(sd, MSG_230, strlen(MSG_230), 0);
     // confirm login
-    return 0;
+    return 1;
 }
 
 /**
@@ -189,7 +202,7 @@ bool authenticate(int sd) {
 void operate(int sd) {
     char op[CMDSIZE], param[PARSIZE];
 
-    while (true) {
+    while (1) {
         op[0] = param[0] = '\0';
         // check for commands send by the client if not inform and exit
 
@@ -210,36 +223,22 @@ void operate(int sd) {
 }
 
 
-void sigchld_handler(int sig)
-{
-    int saved_errno = errno;
-    while(waitpid(-1, NULL, WNOHANG) > 0);
-    errno = saved_errno;
-}
-
-void* get_in_addr(struct sockaddr* addr) {
-    if(addr->sa_family == AF_INET) {
-        return &((struct sockaddr_in*) addr)->sin_addr;
-    }
-    return &((struct sockaddr_in6*) addr)->sin6_addr;
-}
-
 /**
  * Run with
  *         ./mysrv <SERVER_PORT>
  **/
 int main (int argc, char *argv[])
 {
-    int master_sd = 0, slave_sd = 0, yes = 1, rv = 0, pid = 0;
+    int md = 0, sd = 0;
     in_port_t port;
-    struct sigaction sa;
+    int yes = 1;
     struct sockaddr_in srv_addr;
     struct sockaddr_storage cli_addr; // connector address information (big enough)
     socklen_t cli_size = sizeof cli_addr;
 
     if(argc != 2) {
         fprintf(stderr, "Usage: mysrv <server_port>");
-        return 1;
+        exit(1);
     }
 
     port = htons(atoi(argv[1]));
@@ -248,52 +247,64 @@ int main (int argc, char *argv[])
     srv_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
     memset(srv_addr.sin_zero, '\0', sizeof srv_addr.sin_zero);
 
-    master_sd = socket(AF_INET, SOCK_STREAM, 0);
-    if(master_sd == -1) {
+    md = socket(AF_INET, SOCK_STREAM, 0);
+    if(md == -1) {
         perror("socket");
-        return 1;
+        exit(1);
     }
 
-    if(bind(master_sd, (struct sockaddr*) &srv_addr, sizeof srv_addr) == -1) {
+    if(setsockopt(md, SOL_SOCKET, SO_REUSEADDR,&yes, sizeof yes) == -1) {
+        perror("setsocketopt");
+        exit(1);
+    }
+
+    if(bind(md, (struct sockaddr*) &srv_addr, sizeof srv_addr) == -1) {
         perror("bind");
-        return 1;
+        exit(1);
     }
 
-    if(listen(master_sd, 10) == -1){
+    if(listen(md, 10) == -1){
         perror("listen");
-        close(master_sd);
-        return 1;
+        close(md);
+        exit(1);
     }
     printf("Server waiting for connection...\n");
 
-    for(;;) {
-        slave_sd = accept(master_sd, (struct sockaddr*) &cli_addr, &cli_size);
-        handle_connection(slave_sd, master_sd);
+    while(1) {
+        sd = accept(md, (struct sockaddr*) &cli_addr, &cli_size);
+        handle_connection(sd, md);
     }
-    close(slave_sd);
+    close(sd);
 
     return 0;
 }
 
-void handle_connection(int slave_sd, int master_sd) {
-    if(slave_sd == -1){
+void handle_connection(int sd, int md) {
+    if(sd == -1){
         perror("Accept");
         return;
     }
     printf("Received connection!");
     if(!fork()){ // if process is a child
-        close(master_sd);
+        close(md);
         // send message
-        if(send(slave_sd, "Hello world", 13, 0) == -1) {
-            perror("send hello");
+        if(send(sd, MSG_220, strlen(MSG_220), 0) == -1) {
+            close(sd);
+            perror("MSG_220");
             exit(1);
         }
 
-        close(slave_sd);
-        //if(!authenticate(slave_sd))
-        //    exit(1);
-        //
-        //operate(slave_sd);
+        if(!authenticate(sd)){
+            close(sd);
+            exit(1);
+        }
+        //operate(sd);
+        if(send(sd, MSG_221, strlen(MSG_221), 0) == -1) {
+            close(sd);
+            perror("MSG_221");
+            exit(1);
+        }
+
         exit(0);
     }
 }

@@ -6,7 +6,6 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <err.h>
-#include "tcp_utils.h"
 
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -79,7 +78,6 @@ char* read_input() {
 void authenticate(int sd) {
     char *input, desc[100];
     int code;
-
     // ask for user
     printf("username: ");
     input = read_input();
@@ -201,10 +199,10 @@ int main (int argc, char *argv[]) {
     port = atoi(argv[2]);
 
     // create socket and check for errors
-    if(init_sockaddr_in(host,port, &addr) == - 1) {
+    if(init_sockaddr_in(host, port, &addr) == - 1) {
         return 1;
     }
-    
+
     // connect and check for errors
     if(connect(sd, (struct sockaddr *)&addr, sizeof addr) == -1){
         perror("connect");
