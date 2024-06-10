@@ -33,6 +33,7 @@
 #define MSG_226 "226 Transfer complete\r\n"
 
 void handle_connection(int, int);
+void remove_last_two(char *);
 /**
  * function: receive the commands from the client
  * sd: socket descriptor
@@ -135,6 +136,7 @@ int check_credentials(char *user, char *pass) {
     // make the credential string
     sprintf(credentials, "%s:%s", user, pass);
 
+    printf("credentials: %s\n", credentials);
     // check if ftpusers file it's present
     file = fopen(path, "r");
     if (!file) {
@@ -165,23 +167,26 @@ int check_credentials(char *user, char *pass) {
  * return: true if login is succesfully, false if not
  **/
 int authenticate(int sd) {
-    char user[PARSIZE], pass[PARSIZE], response[PARSIZE];
+    int response_len = strlen(MSG_230) + PARSIZE;
+    char user[PARSIZE];
+    char pass[PARSIZE];
+    char cli_msg[PARSIZE];
+    char response[response_len];
 
     // remember to check for errors and exit if anything happens
     // wait to receive USER action
     do {
-        recv(sd, response, PARSIZE, 0);
-        printf("%s\n", response);
-    } while(strcmp(response, "USER"));
+        recv(sd, cli_msg, PARSIZE, 0);
+    } while(strcmp(cli_msg, "USER\r\n"));
 
-    send(sd, "User: ", strlen("User: "), 0);
     recv(sd, user, PARSIZE, 0);
-
+    remove_last_two(user);
     do {
-        recv(sd, response, PARSIZE, 0);
-    } while(strcmp(response, "PASS"));
+        recv(sd, cli_msg, PARSIZE, 0);
+    } while(strcmp(cli_msg, "PASS\r\n"));
 
     recv(sd, pass, PARSIZE, 0);
+    remove_last_two(pass);
     // wait to receive PASS action
 
     // if credentials don't check denied login
@@ -189,7 +194,8 @@ int authenticate(int sd) {
        send(sd, MSG_530, strlen(MSG_530), 0);
        return 0;
     }
-    send(sd, MSG_230, strlen(MSG_230), 0);
+    sprintf(response, MSG_230, user);
+    send(sd, response, strlen(response), 0);
     // confirm login
     return 1;
 }
@@ -211,8 +217,6 @@ void operate(int sd) {
             retr(sd, param);
         } else if (strcmp(op, "QUIT") == 0) {
             // send goodbye and close connection
-
-
 
             break;
         } else {
@@ -274,19 +278,19 @@ int main (int argc, char *argv[])
         sd = accept(md, (struct sockaddr*) &cli_addr, &cli_size);
         handle_connection(sd, md);
     }
-    close(sd);
 
     return 0;
 }
 
 void handle_connection(int sd, int md) {
+    char msg[] = "Hello world\n";
     if(sd == -1){
         perror("Accept");
         return;
     }
-    printf("Received connection!");
+
     if(!fork()){ // if process is a child
-        close(md);
+        close(md); // child does not require this
         // send message
         if(send(sd, MSG_220, strlen(MSG_220), 0) == -1) {
             close(sd);
@@ -298,13 +302,23 @@ void handle_connection(int sd, int md) {
             close(sd);
             exit(1);
         }
+        
+        printf("Entramos para cerrar1234\n");
         //operate(sd);
+
         if(send(sd, MSG_221, strlen(MSG_221), 0) == -1) {
-            close(sd);
             perror("MSG_221");
+            close(sd);
             exit(1);
         }
 
+        close(sd);
         exit(0);
     }
+    close(sd);
+}
+
+void remove_last_two(char *buf) {
+    int len = strlen(buf);
+    buf[len-1] = (buf[len-2] = '\0');
 }
