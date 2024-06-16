@@ -331,6 +331,7 @@ void operate(int sd) {
     for (;;) {
         op[0] = param[0] = '\0';
         send(sd, waiting_msg, strlen(waiting_msg), 0);
+
         if(!recv_cmd(sd, op, param))
             return;
 
