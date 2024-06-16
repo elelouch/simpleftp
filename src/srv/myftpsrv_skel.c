@@ -100,7 +100,7 @@ int main (int argc, char *argv[]) {
 
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_UNSPEC;    /* Allow IPv4 or IPv6 */
-    hints.ai_socktype = SOCK_DGRAM; /* Datagram socket */
+    hints.ai_socktype = SOCK_STREAM; /* TCP connection */
     hints.ai_flags = AI_PASSIVE;    /* For wildcard IP address */
     hints.ai_protocol = 0;          /* Any protocol */
     hints.ai_canonname = NULL;
@@ -113,6 +113,7 @@ int main (int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
+    // bind the first socket found
     for(rp = p; rp != NULL; rp = rp->ai_next) {
         msd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
         if(msd == -1) {
@@ -133,6 +134,11 @@ int main (int argc, char *argv[]) {
         break; // socket binded, success
     }
 
+    if(rp == NULL) {
+        fprintf(stderr, "Server failed to bind\n");
+        exit(EXIT_FAILURE);
+    }
+
     freeaddrinfo(p);
 
     if(listen(msd, BACKLOG_SIZE) == -1) {
@@ -140,15 +146,19 @@ int main (int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
+    //printf("entrandooo\n");
+    printf("Waiting for a new connection...");
+    sleep(1);
     for(;;) {
         ssd = accept(msd, (struct sockaddr*) &peer_addr, &peer_len);
         handle_connection(ssd, msd);
     }
 
+    close(msd);
+
     return 0;
 }
 
-<<<<<<< HEAD
 void handle_connection(int ssd, int msd) {
     if(ssd == -1) {
         perror("socket");
@@ -157,15 +167,12 @@ void handle_connection(int ssd, int msd) {
 
     if(!fork()) {
         close(msd);
-
         send_ans(ssd, MSG_220);
         if(!authenticate(ssd)){
             close(ssd);
             exit(EXIT_FAILURE);
         }
-
         operate(ssd);
-
         send_ans(ssd, MSG_221);
         close(ssd);
         exit(EXIT_SUCCESS);
@@ -197,9 +204,15 @@ int recv_cmd(int sd, char *operation, char *param) {
     int recv_s;
 
     // receive the command in the buffer and check for errors
-    if(recv(sd, buffer, BUFSIZE, 0) == -1) {
-        fprintf(stderr, "Error while receiving command\n");
+    recv_s = recv(sd, buffer, BUFSIZE, 0);
+    if(recv_s == -1) {
+        fprintf(stderr, "Error while receiving host command\n");
         return 0;
+    }
+
+    if(recv_s == 0){
+        printf("Host performed an orderly shutdown\n");
+        return 1;
     }
 
     // expunge the terminator characters from the buffer
@@ -218,9 +231,11 @@ int recv_cmd(int sd, char *operation, char *param) {
         warn("Abnormal client flow: did not send %s command", operation);
         return 0;
     }
+
     token = strtok(NULL, " ");
     if (token != NULL) strcpy(param, token);
     return 1;
+
 }
 
 void retr(int sd, char *file_path) {
@@ -230,9 +245,9 @@ void retr(int sd, char *file_path) {
     char buffer[BUFSIZE];
 
     // check if file exists if not inform error to client
-    file = fopen(file_path, "rw");
+    file = fopen(file_path, "r");
     if(!file) {
-        send_ans(sd, MSG_550);
+        send_ans(sd, MSG_550); // TODO: suggest to use ls command
         return;
     }
 
@@ -240,21 +255,25 @@ void retr(int sd, char *file_path) {
     fseek(file, 0L, SEEK_END);
     fsize = ftell(file);
     fseek(file, 0L, SEEK_SET);
-    send_ans(sd, MSG_299, file_path);
+    send_ans(sd, MSG_299, file_path, fsize);
 
     // important delay for avoid problems with buffer size
     sleep(1);
 
     // send the file
-    while(fread(buffer, BUFSIZE, 1, file)){
-        send(sd, buffer, BUFSIZE, 0);
+    while((bread = fread(buffer, BUFSIZE, 1, file))){
+        send(sd, buffer, bread, 0);
     }
+
+    if(ferror(file))
+        send_ans(sd, "Error while reading %s", file_path);
+    else
+        send_ans(sd, MSG_226);
+
 
     // close the file
     fclose(file);
 
-    // send a completed transfer message
-    send_ans(sd, MSG_226);
 }
 
 int check_credentials(char *user, char *pass) {
@@ -263,7 +282,7 @@ int check_credentials(char *user, char *pass) {
     size_t line_size = 0;
     int found = 0;
 
-    // make the credential string
+    // make the
     sprintf(credentials, "%s:%s", user, pass);
 
     // check if ftpusers file it's present
@@ -271,8 +290,6 @@ int check_credentials(char *user, char *pass) {
         warn("Error opening %s", path);
         return 0;
     }
-
-    // search for credential string
     while (getline(&line, &line_size, file) != -1) {
         strtok(line, "\n");
         if (strcmp(line, credentials) == 0) {
@@ -280,37 +297,48 @@ int check_credentials(char *user, char *pass) {
             break;
         }
     }
-
-    // close file and release any pointers if necessary
     fclose(file);
     if (line) free(line);
-
-    // return search status
     return found;
 }
 
 int authenticate(int sd) {
     char user[PARSIZE], pass[PARSIZE];
 
-    // wait to receive USER action
+    send_ans(sd, "Waiting for login...\n");
+
     if(!recv_cmd(sd, "USER", user)){
         return 0;
     }
 
-    // ask for password
     send_ans(sd, "Waiting for PASS action...\n");
 
-    // wait to receive PASS action
     if(!recv_cmd(sd, "PASS", pass)){
         return 0;
     }
-    // if credentials don't check denied login
-    if(check_credentials(user, pass)) {
+
+    if(!check_credentials(user, pass)) {
         send_ans(sd, MSG_530);
         return 0;
     }
-
-    // confirm login
     return send_ans(sd, MSG_230, user);
 }
+
+void operate(int sd) {
+    char op[CMDSIZE], param[PARSIZE];
+    char waiting_msg[] = "Waiting for command...\n";
+
+    for (;;) {
+        op[0] = param[0] = '\0';
+        send(sd, waiting_msg, strlen(waiting_msg), 0);
+        if(!recv_cmd(sd, op, param))
+            return;
+
+        if (strcmp(op, "RETR") == 0) {
+            retr(sd, param);
+        } else if (strcmp(op, "QUIT") == 0) {
+            return;
+        } else {
+        }
+    }
 }
