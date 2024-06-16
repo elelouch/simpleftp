@@ -11,7 +11,10 @@
 
 #define BUFSIZE 512
 #define HELLO_CODE 220
+#define GOODBYE_CODE 220
 #define WRONG_LOGIN_CODE 550
+#define LOGGED_CODE 230
+#define PASSWORD_REQUIRED_CODE 230
 
 #define MSG_220 "220 srvFtp version 1.0\r\n"
 #define MSG_331 "331 Password required for %s\r\n"
@@ -132,6 +135,8 @@ int main (int argc, char *argv[]) {
         close(sd);
     }
 
+    operate(sd);
+
     // close socket
     close(sd);
 
@@ -143,15 +148,20 @@ int recv_msg(int sd, int code, char *text) {
     int recv_s, recv_code;
 
     // receive the answer
-
-
+    recv_s = recv(sd, buffer, BUFSIZE, 0);
     // error checking
-    if (recv_s < 0) warn("error receiving data");
-    if (recv_s == 0) errx(1, "connection closed by host");
+    if (recv_s == -1) warn("error receiving data");
+
+    if (recv_s == 0) {
+        close(sd);
+        fprintf(stderr, "connection closed by host\n");
+        exit(EXIT_FAILURE);
+    }
 
     // parsing the code and message receive from the answer
     sscanf(buffer, "%d %[^\r\n]\r\n", &recv_code, message);
     printf("%d %s\n", recv_code, message);
+
     // optional copy of parameters
     if(text) strcpy(text, message);
     return code == recv_code;
@@ -167,10 +177,13 @@ void send_msg(int sd, char *operation, char *param) {
         sprintf(buffer, "%s\r\n", operation);
 
     // send command and check for errors
+    if(send(sd, buffer, strlen(buffer), 0) == -1) {
+        fprintf(stderr, "couldn't send message\n");
+    }
 
 }
 
-char * read_input() {
+char *read_input() {
     char *input = malloc(BUFSIZE);
     if (fgets(input, BUFSIZE, stdin)) {
         return strtok(input, "\n");
@@ -187,24 +200,31 @@ int authenticate(int sd) {
     input = read_input();
 
     // send the command to the server
-
-    // relese memory
+    send_msg(sd, "USER", input);
+    // release memory
     free(input);
 
     // wait to receive password requirement and check for errors
-
+    if(!recv_msg(sd, PASSWORD_REQUIRED_CODE, desc)) {
+        fprintf(stderr, "Abnormal flow: %s\n", desc);
+        return 0;
+    }
 
     // ask for password
     printf("passwd: ");
     input = read_input();
 
     // send the command to the server
-
+    send_msg(sd, "PASS", input);
 
     // release memory
     free(input);
 
     // wait for answer and process it and check for errors
+    if(!recv_msg(sd, LOGGED_CODE, desc)) {
+        fprintf(stderr, "Incorrect credentials: %s\n", desc);
+        return 0;
+    }
 
     return 1;
 }
@@ -225,6 +245,7 @@ void get(int sd, char *file_name) {
     // open the file to write
     file = fopen(file_name, "w");
 
+
     //receive the file
 
 
@@ -238,8 +259,13 @@ void get(int sd, char *file_name) {
 
 void quit(int sd) {
     // send command QUIT to the client
-
+    send_msg(sd, "QUIT", NULL);
     // receive the answer from the server
+    if(!recv_msg(sd, GOODBYE_CODE, NULL)) {
+        fprintf(stderr, "couldn't close server connection properly\n");
+        close(sd);
+        exit(EXIT_FAILURE);
+    }
 
 }
 

@@ -305,13 +305,11 @@ int check_credentials(char *user, char *pass) {
 int authenticate(int sd) {
     char user[PARSIZE], pass[PARSIZE];
 
-    send_ans(sd, "Waiting for login...\n");
-
     if(!recv_cmd(sd, "USER", user)){
         return 0;
     }
 
-    send_ans(sd, "Waiting for PASS action...\n");
+    send_ans(sd, MSG_331, user);
 
     if(!recv_cmd(sd, "PASS", pass)){
         return 0;
