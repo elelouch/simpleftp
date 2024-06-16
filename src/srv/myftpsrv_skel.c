@@ -124,8 +124,10 @@ void retr(int sd, char *file_path) {
     sleep(1);
 
     // send the file
-    while(
-
+    while(fread(buffer, BUFSIZE, 1, file)){
+        send(sd, buffer, BUFSIZE, 0);
+    }
+          
     // close the file
 
     // send a completed transfer message
@@ -296,27 +298,3 @@ int main (int argc, char *argv[]) {
     return 0;
 }
 
-void handle_connection(int ssd, int msd) {
-    if(ssd == -1) {
-        perror("socket");
-        return;
-    }
-
-    if(!fork()) {
-        close(msd);
-
-        send_ans(ssd, MSG_220);
-        if(!authenticate(ssd)){
-            close(ssd);
-            exit(EXIT_FAILURE);
-        }
-
-        operate(ssd);
-
-        send_ans(ssd, MSG_221);
-        close(ssd);
-        exit(EXIT_SUCCESS);
-    }
-
-    close(ssd);
-}
