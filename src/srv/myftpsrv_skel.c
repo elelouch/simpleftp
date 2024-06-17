@@ -7,6 +7,7 @@
 #include <err.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <fcntl.h>
 
 
 #include <netinet/in.h>
@@ -24,8 +25,14 @@
 #define MSG_550 "550 %s: no such file or directory\r\n"
 #define MSG_299 "299 File %s size %ld bytes\r\n"
 #define MSG_226 "226 Transfer complete\r\n"
+#define MSG_215 "215 UNIX Type\r\n"
+#define MSG_211 "211 RETR <path>: retrieve a file\n \
+                 211 QUIT: stop connection\r\n"
 
 
+/* Sends data connection to the client after
+   if it wants to be in passive mode*/
+void eprt(int sd, char* param);
 /* handles peer connection in the main loop
     ssd: slave socket descriptor
     msd: master socket descriptor
@@ -134,7 +141,7 @@ int main (int argc, char *argv[]) {
         break; // socket binded, success
     }
 
-    if(rp == NULL) {
+    if(!rp) {
         fprintf(stderr, "Server failed to bind\n");
         exit(EXIT_FAILURE);
     }
@@ -146,9 +153,6 @@ int main (int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    //printf("entrandooo\n");
-    printf("Waiting for a new connection...");
-    sleep(1);
     for(;;) {
         ssd = accept(msd, (struct sockaddr*) &peer_addr, &peer_len);
         handle_connection(ssd, msd);
@@ -173,7 +177,7 @@ void handle_connection(int ssd, int msd) {
             exit(EXIT_FAILURE);
         }
         operate(ssd);
-        send_ans(ssd, MSG_221);
+        // securing
         close(ssd);
         exit(EXIT_SUCCESS);
     }
@@ -192,7 +196,7 @@ int send_ans(int sd, char *message, ...){
     va_end(args);
     // send answer preformated and check errors
     if(send(sd, buffer, strlen(buffer), 0) == -1){
-        fprintf(stderr, "Couldn't send answer to client\n");
+        perror("send");
         return 0;
     }
 
@@ -212,12 +216,13 @@ int recv_cmd(int sd, char *operation, char *param) {
 
     if(recv_s == 0){
         printf("Host performed an orderly shutdown\n");
-        return 1;
+        exit(EXIT_FAILURE);
     }
 
     // expunge the terminator characters from the buffer
     buffer[strcspn(buffer, "\r\n")] = 0;
 
+    printf("client response: %s\n", buffer);
     // complex parsing of the buffer
     // extract command received in operation if not set \0
     // extract parameters of the operation in param if it needed
@@ -240,6 +245,7 @@ int recv_cmd(int sd, char *operation, char *param) {
 
 void retr(int sd, char *file_path) {
     FILE *file;
+    
     int bread;
     long fsize;
     char buffer[BUFSIZE];
@@ -247,7 +253,7 @@ void retr(int sd, char *file_path) {
     // check if file exists if not inform error to client
     file = fopen(file_path, "r");
     if(!file) {
-        send_ans(sd, MSG_550); // TODO: suggest to use ls command
+        send_ans(sd, MSG_550); // TODO: suggest to use LIST command
         return;
     }
 
@@ -324,11 +330,9 @@ int authenticate(int sd) {
 
 void operate(int sd) {
     char op[CMDSIZE], param[PARSIZE];
-    char waiting_msg[] = "Waiting for command...\n";
 
     for (;;) {
         op[0] = param[0] = '\0';
-        send(sd, waiting_msg, strlen(waiting_msg), 0);
 
         if(!recv_cmd(sd, op, param))
             return;
@@ -336,8 +340,19 @@ void operate(int sd) {
         if (strcmp(op, "RETR") == 0) {
             retr(sd, param);
         } else if (strcmp(op, "QUIT") == 0) {
-            return;
-        } else {
+            send_ans(sd, MSG_221);
+            close(sd);
+            exit(EXIT_SUCCESS);
+        } else if (strcmp(op, "EPRT") == 0){
+
+        } else if(strcmp(op, "SYST") == 0){
+            send_ans(sd, MSG_215);
+        } else if(strcmp(op, "FEAT") == 0) {
+            send_ans(sd, MSG_211);
         }
     }
+}
+
+void eprt(int sd, char* cli_addr) {
+
 }
