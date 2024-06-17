@@ -16,6 +16,7 @@
 #define CMDSIZE 4
 #define PARSIZE 100
 #define BACKLOG_SIZE 10
+#define EPRT_DELIM "|"
 
 #define MSG_220 "220 srvFtp version 1.0\r\n"
 #define MSG_331 "331 Password required for %s\r\n"
@@ -25,14 +26,16 @@
 #define MSG_550 "550 %s: no such file or directory\r\n"
 #define MSG_299 "299 File %s size %ld bytes\r\n"
 #define MSG_226 "226 Transfer complete\r\n"
+#define MSG_227 "227 Ok. Server entering active mode...\r\n"
 #define MSG_215 "215 UNIX Type\r\n"
-#define MSG_211 "211 RETR <path>: retrieve a file\n \
+#define MSG_211 "211 RETR <path>: retrieve a file\r\n\
                  211 QUIT: stop connection\r\n"
 
 
-/* Sends data connection to the client after
-   if it wants to be in passive mode*/
-void eprt(int sd, char* param);
+/* Used when a client wants to enter in passive mode sending EPRT.
+   the "|" character is used as delimiter for RFC 2428 suggestion
+   return : returns the transfer channel*/
+int eprt(int sd, char* param);
 /* handles peer connection in the main loop
     ssd: slave socket descriptor
     msd: master socket descriptor
@@ -200,6 +203,8 @@ int send_ans(int sd, char *message, ...){
         return 0;
     }
 
+
+
     return 1;
 }
 
@@ -245,7 +250,6 @@ int recv_cmd(int sd, char *operation, char *param) {
 
 void retr(int sd, char *file_path) {
     FILE *file;
-    
     int bread;
     long fsize;
     char buffer[BUFSIZE];
@@ -330,6 +334,7 @@ int authenticate(int sd) {
 
 void operate(int sd) {
     char op[CMDSIZE], param[PARSIZE];
+    int transfer_chnl = -1;
 
     for (;;) {
         op[0] = param[0] = '\0';
@@ -337,14 +342,14 @@ void operate(int sd) {
         if(!recv_cmd(sd, op, param))
             return;
 
-        if (strcmp(op, "RETR") == 0) {
-            retr(sd, param);
+        if (!strcmp(op, "RETR")) {
+            retr(transfer_chnl, param);
         } else if (strcmp(op, "QUIT") == 0) {
             send_ans(sd, MSG_221);
             close(sd);
             exit(EXIT_SUCCESS);
         } else if (strcmp(op, "EPRT") == 0){
-
+            transfer_chnl = eprt(sd, param);
         } else if(strcmp(op, "SYST") == 0){
             send_ans(sd, MSG_215);
         } else if(strcmp(op, "FEAT") == 0) {
@@ -353,6 +358,35 @@ void operate(int sd) {
     }
 }
 
-void eprt(int sd, char* cli_addr) {
+// TODO improve error checking
+int eprt(int cmd_chnl, char* cli_addr) {
+    char *addr_family = strtok(cli_addr, EPRT_DELIM);
+    char *ip_addr = strtok(NULL, EPRT_DELIM);
+    char *port = strtok(NULL, EPRT_DELIM);
+    int cli_sd = -1;
+    struct addrinfo hints, *servinfo, *p;
 
+    hints.ai_family = atoi(addr_family);
+    hints.ai_socktype = SOCK_DGRAM;
+    hints.ai_flags = 0;
+    hints.ai_protocol = 0;
+
+    getaddrinfo(ip_addr, port, &hints, &servinfo);
+    for(p = servinfo; p != NULL; p = p->ai_next) {
+        cli_sd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+        if(cli_sd == -1) {
+            perror("socket");
+            continue;
+        }
+
+        if(connect(cli_sd, p->ai_addr, p->ai_addrlen) != -1){
+            break;
+        }
+
+        perror("connect");
+        close(cli_sd);
+    }
+
+    send_ans(cmd_chnl, MSG_227);
+    return cli_sd;
 }
