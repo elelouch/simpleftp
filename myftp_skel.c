@@ -128,7 +128,6 @@ void get(int sd, char *file_name) {
     //receive the file
 
 
-
     // close the file
     fclose(file);
 
