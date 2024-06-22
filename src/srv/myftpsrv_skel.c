@@ -1,3 +1,4 @@
+#include <linux/limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,6 +10,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <fcntl.h>
+#include <limits.h>
 
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -32,9 +34,11 @@
 #define MSG_229 "229 Entering Extended Passive Mode (|||%s|)\r\n"
 #define MSG_227 "227 Entering Passive Mode (%d,%d,%d,%d,%d,%d)\r\n"
 #define MSG_215 "215 UNIX Type\r\n"
+#define MSG_257 "257 \"%s\" is the current directory\r\n"
 #define MSG_211 "211 - RETR <path>: retrieve a file\n\
                  211 - QUIT: stop connection\r\n"
 
+void retr_wrapper(int sd, char* param);
 /* builds the espv response using the opened sd
  * return: -1 on error
  *          0 on success
@@ -132,6 +136,7 @@ int main(int argc, char *argv[])
         perror("listen");
         exit(EXIT_FAILURE);
     }
+    
 
     for (;;) {
         ssd = accept(msd, (struct sockaddr *)&peer_addr, &peer_len);
@@ -236,8 +241,6 @@ void retr(int sd, char *file_path)
     long fsize;
     char buffer[BUFSIZE];
 
-    if(fork()) return;
-
     // check if file exists if not inform error to client
     file = fopen(file_path, "r");
     if (!file) {
@@ -331,16 +334,12 @@ void operate(int sd)
             return;
 
         if (!strcmp(op, "RETR")) {
-            retr(transfer_chnl, param);
+            retr_wrapper(transfer_chnl, param);
         } else if (strcmp(op, "QUIT") == 0) {
             send_ans(sd, MSG_221);
             close(sd);
             exit(EXIT_SUCCESS);
-        }
-        //else if (strcmp(op, "EPSV") == 0) {
-        //    transfer_chnl = epsv(sd);
-        //}
-        else if (strcmp(op, "SYST") == 0) {
+        } else if (strcmp(op, "SYST") == 0) {
             send_ans(sd, MSG_215);
         } else if (strcmp(op, "FEAT") == 0) {
             send_ans(sd, MSG_211);
@@ -370,6 +369,7 @@ int opensock_tcpsrv(char *address, char *service)
     int sd, addrstat, yes = 1;
     struct addrinfo hints;
     struct addrinfo *p, *rp;
+    char ip_addr[INET6_ADDRSTRLEN];
 
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_UNSPEC;     /* Allow IPv4 or IPv6 */
@@ -411,6 +411,10 @@ int opensock_tcpsrv(char *address, char *service)
 
     freeaddrinfo(p);
 
+    if(inet_ntop(rp->ai_family, rp->ai_addr, ip_addr, INET6_ADDRSTRLEN)) {
+        perror("inet_ntop");
+    }
+    printf("Connected socket IP address: %s - %d\n", ip_addr, sd);
     // and return socket
     return sd;
 }
@@ -437,22 +441,17 @@ int send_epsv_ans(int cmd_chnl_sd, int file_chnl_sd) {
 int send_pasv_ans(int cmd_chnl_sd, int file_chnl_sd) {
     struct sockaddr_in addr;
     socklen_t len = sizeof(addr);
-    int a, b, c, d, port;
+    int a, b, c, d, port, gsn;
     char ipv4_str[INET_ADDRSTRLEN];
 
-    if(getsockname(file_chnl_sd, (struct sockaddr*) &addr, &len) == -1)
+    gsn = getsockname(file_chnl_sd, (struct sockaddr*) &addr, &len);
+    if(gsn == -1)
         return -1;
 
-
     inet_ntop(AF_INET, &addr, ipv4_str, INET_ADDRSTRLEN);
-
     port = htons(addr.sin_port);
-
     sscanf(ipv4_str,"%d.%d.%d.%d", &a, &b, &c, &d);
-
-
     send_ans(cmd_chnl_sd, MSG_227, a, b, c, d, port / 256, port % 256);
-
     return 0;
 }
 
@@ -468,4 +467,36 @@ int pasv(int cmd_chnl)
 
     send_pasv_ans(cmd_chnl, file_chnl); // Error checking 
     return file_chnl;
+}
+
+void retr_wrapper(int file_chnl, char *file_path) {
+    struct sockaddr_storage addr;
+    socklen_t addr_len = sizeof(addr);
+    int sd;
+
+    if(fork()) return;
+
+    if(listen(file_chnl, 10) == -1) {
+        perror("retr_wrapper:listen");
+        exit(EXIT_FAILURE);
+    }
+
+    sd = accept(file_chnl, (struct sockaddr*) &addr, &addr_len);
+    if(sd == -1) {
+        perror("retr_wrapper:accept");
+        exit(EXIT_FAILURE);
+    }
+
+    retr(sd, file_path);
+    close(sd);
+    exit(EXIT_SUCCESS);
+}
+
+void pwd(int sd) {
+    char buffer[PATH_MAX];
+    if(getcwd(buffer, PATH_MAX)) {
+        send_ans(sd, MSG_257, buffer);
+        return;
+    }
+    send_ans(sd, MSG_550, buffer);
 }
