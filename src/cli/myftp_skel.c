@@ -125,7 +125,7 @@ int main (int argc, char *argv[]) {
     // if receive hello proceed with authenticate and operate if not warning
     if(!recv_msg(sd, HELLO_CODE, NULL)) {
         fprintf(stderr, "Hello message not received, quiting client...\n");
-        exit(EXIT_FAILURE);
+
         close(sd);
     }
 
