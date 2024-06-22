@@ -6,15 +6,18 @@
 #include <netdb.h>
 #include <err.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <fcntl.h>
 
 #include <netinet/in.h>
+#include <arpa/inet.h>
 
 #define BUFSIZE 512
 #define CMDSIZE 4
 #define PARSIZE 100
 #define BACKLOG_SIZE 10
+#define PORT_LEN 5 + 1 // (2^16) + '\0'
 
 #define MSG_220 "220 srvFtp version 1.0\r\n"
 #define MSG_331 "331 Password required for %s\r\n"
@@ -23,19 +26,33 @@
 #define MSG_221 "221 Goodbye\r\n"
 #define MSG_550 "550 %s: no such file or directory\r\n"
 #define MSG_502 "502 Command not implemented\r\n"
+#define MSG_501 "501 Syntax errors in parameters or arguments\r\n"
 #define MSG_299 "299 File %s size %ld bytes\r\n"
 #define MSG_226 "226 Transfer complete\r\n"
-#define MSG_227 "227 Ok. Server entering passive mode...\r\n"
+#define MSG_229 "229 Entering Extended Passive Mode (|||%s|)\r\n"
+#define MSG_227 "227 Entering Passive Mode (%d,%d,%d,%d,%d,%d)\r\n"
 #define MSG_215 "215 UNIX Type\r\n"
 #define MSG_211 "211 - RETR <path>: retrieve a file\n\
                  211 - QUIT: stop connection\r\n"
 
+/* builds the espv response using the opened sd
+ * return: -1 on error
+ *          0 on success
+ */
+int send_pasv_ans(int cmd_chnl_sd, int file_chnl_sd); 
+/* builds the espv response using the opened sd
+ * return: -1 on error
+ *          0 on success
+ */
+int send_epsv_ans(int cmd_chnl_sd, int file_chnl_sd); 
 
 /* Opens a socket for a tcp server.
  * If service is null, then the OS chooses the port.
  * return: server socket descriptor
  */
 int opensock_tcpsrv(char *address, char *service);
+
+int pasv(int sd);
 
 int epsv(int sd);
 /* handles peer connection in the main loop
@@ -129,7 +146,7 @@ int main(int argc, char *argv[])
 void handle_connection(int ssd, int msd)
 {
     if (ssd == -1) {
-        perror("socket");
+        perror("handle_connection:socket");
         return;
     }
 
@@ -153,14 +170,17 @@ int send_ans(int sd, char *message, ...)
 {
     char buffer[BUFSIZE];
 
+
     va_list args;
     va_start(args, message);
 
     vsprintf(buffer, message, args);
     va_end(args);
     // send answer preformated and check errors
+    printf("is socket: %d\n", S_ISSOCK(sd));
+    printf("send_ans fd: %d\n", fcntl(sd, F_GETFD));
     if (send(sd, buffer, strlen(buffer), 0) == -1) {
-        perror("send");
+        perror("send_ans:send");
         return 0;
     }
 
@@ -184,10 +204,10 @@ int recv_cmd(int sd, char *operation, char *param)
         exit(EXIT_FAILURE);
     }
 
+    printf("client command: %s\n", buffer);
     // expunge the terminator characters from the buffer
     buffer[strcspn(buffer, "\r\n")] = 0;
 
-    printf("client response: %s\n", buffer);
     // complex parsing of the buffer
     // extract command received in operation if not set \0
     // extract parameters of the operation in param if it needed
@@ -215,6 +235,8 @@ void retr(int sd, char *file_path)
     int bread;
     long fsize;
     char buffer[BUFSIZE];
+
+    if(fork()) return;
 
     // check if file exists if not inform error to client
     file = fopen(file_path, "r");
@@ -244,6 +266,7 @@ void retr(int sd, char *file_path)
 
     // close the file
     fclose(file);
+    exit(EXIT_SUCCESS);
 }
 
 int check_credentials(char *user, char *pass)
@@ -257,16 +280,13 @@ int check_credentials(char *user, char *pass)
     sprintf(credentials, "%s:%s", user, pass);
 
     // check if ftpusers file it's present
-    if ((file = fopen(path, "r")) == NULL)
-    {
+    if ((file = fopen(path, "r")) == NULL) {
         warn("Error opening %s", path);
         return 0;
     }
-    while (getline(&line, &line_size, file) != -1)
-    {
+    while (getline(&line, &line_size, file) != -1) {
         strtok(line, "\n");
-        if (strcmp(line, credentials) == 0)
-        {
+        if (strcmp(line, credentials) == 0) {
             found = 1;
             break;
         }
@@ -281,15 +301,13 @@ int authenticate(int sd)
 {
     char user[PARSIZE], pass[PARSIZE];
 
-    if (!recv_cmd(sd, "USER", user))
-    {
+    if (!recv_cmd(sd, "USER", user)) {
         return 0;
     }
 
     send_ans(sd, MSG_331, user);
 
-    if (!recv_cmd(sd, "PASS", pass))
-    {
+    if (!recv_cmd(sd, "PASS", pass)) {
         return 0;
     }
 
@@ -306,37 +324,29 @@ void operate(int sd)
     char op[CMDSIZE], param[PARSIZE];
     int transfer_chnl = -1;
 
-    for (;;)
-    {
+    for (;;) {
         op[0] = param[0] = '\0';
 
         if (!recv_cmd(sd, op, param))
             return;
 
-        if (!strcmp(op, "RETR"))
-        {
+        if (!strcmp(op, "RETR")) {
             retr(transfer_chnl, param);
-        }
-        else if (strcmp(op, "QUIT") == 0)
-        {
+        } else if (strcmp(op, "QUIT") == 0) {
             send_ans(sd, MSG_221);
             close(sd);
             exit(EXIT_SUCCESS);
         }
-        else if (strcmp(op, "EPSV") == 0)
-        {
-            transfer_chnl = epsv(sd);
-        }
-        else if (strcmp(op, "SYST") == 0)
-        {
+        //else if (strcmp(op, "EPSV") == 0) {
+        //    transfer_chnl = epsv(sd);
+        //}
+        else if (strcmp(op, "SYST") == 0) {
             send_ans(sd, MSG_215);
-        }
-        else if (strcmp(op, "FEAT") == 0)
-        {
+        } else if (strcmp(op, "FEAT") == 0) {
             send_ans(sd, MSG_211);
-        }
-        else
-        {
+        } else if (strcmp(op, "PASV") == 0)  {
+            transfer_chnl = pasv(sd);
+        } else {
             send_ans(sd, MSG_502);
         }
     }
@@ -344,19 +354,20 @@ void operate(int sd)
 
 int epsv(int cmd_chnl)
 {
-    int sd = opensock_tcpsrv("127.0.0.1", NULL);
-    if(sd == -1) {
-        send_ans(cmd_chnl, MSG_227);
-        return sd;
+    int file_chnl = opensock_tcpsrv("127.0.0.1", NULL);
+
+    if(file_chnl == -1) {
+        send_ans(cmd_chnl, MSG_502);
+        return -1;
     }
 
-    send_ans(cmd_chnl, MSG_227);
-    return -1;
+    send_epsv_ans(cmd_chnl, file_chnl); // Error checking 
+    return file_chnl;
 }
 
 int opensock_tcpsrv(char *address, char *service) 
 {
-    int sd, ssd, addrstat, yes = 1;
+    int sd, addrstat, yes = 1;
     struct addrinfo hints;
     struct addrinfo *p, *rp;
 
@@ -376,7 +387,7 @@ int opensock_tcpsrv(char *address, char *service)
     for (rp = p; rp != NULL; rp = rp->ai_next){
         sd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
         if (sd == -1) {
-            perror("socket");
+            perror("opensock_tscpsrv:socket");
             continue;
         }
 
@@ -402,4 +413,59 @@ int opensock_tcpsrv(char *address, char *service)
 
     // and return socket
     return sd;
+}
+
+
+int send_epsv_ans(int cmd_chnl_sd, int file_chnl_sd) {
+    struct sockaddr_storage addr;
+    socklen_t len = sizeof(addr);
+    char port_str[PORT_LEN];
+
+    if(getsockname(file_chnl_sd, (struct sockaddr*) &addr, &len) == -1)
+        return -1;
+
+    if(addr.ss_family == AF_INET) {
+        sprintf(port_str, "%hu", ((struct sockaddr_in*) &addr)->sin_port);
+    } else { 
+        sprintf(port_str, "%hu", ((struct sockaddr_in6*) &addr)->sin6_port);
+    }
+
+    send_ans(cmd_chnl_sd, MSG_229, port_str);
+    return 0;
+}
+
+int send_pasv_ans(int cmd_chnl_sd, int file_chnl_sd) {
+    struct sockaddr_in addr;
+    socklen_t len = sizeof(addr);
+    int a, b, c, d, port;
+    char ipv4_str[INET_ADDRSTRLEN];
+
+    if(getsockname(file_chnl_sd, (struct sockaddr*) &addr, &len) == -1)
+        return -1;
+
+
+    inet_ntop(AF_INET, &addr, ipv4_str, INET_ADDRSTRLEN);
+
+    port = htons(addr.sin_port);
+
+    sscanf(ipv4_str,"%d.%d.%d.%d", &a, &b, &c, &d);
+
+
+    send_ans(cmd_chnl_sd, MSG_227, a, b, c, d, port / 256, port % 256);
+
+    return 0;
+}
+
+int pasv(int cmd_chnl)
+{
+    int file_chnl = opensock_tcpsrv("127.0.0.1", NULL);
+
+    if(file_chnl == -1) {
+        send_ans(cmd_chnl, MSG_502);
+        fprintf(stderr, "Error while opening sockets\n");
+        return -1;
+    }
+
+    send_pasv_ans(cmd_chnl, file_chnl); // Error checking 
+    return file_chnl;
 }
