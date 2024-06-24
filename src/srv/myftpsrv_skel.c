@@ -21,25 +21,28 @@
 #define BACKLOG_SIZE 10
 #define PORT_LEN 5 + 1 // (2^16) + '\0'
 
-#define MSG_220 "220 srvFtp version 1.0\r\n"
-#define MSG_331 "331 Password required for %s\r\n"
-#define MSG_230 "230 User %s logged in\r\n"
-#define MSG_530 "530 Login incorrect\r\n"
-#define MSG_221 "221 Goodbye\r\n"
-#define MSG_550 "550 %s: no such file or directory\r\n"
-#define MSG_502 "502 Command not implemented\r\n"
-#define MSG_501 "501 Syntax errors in parameters or arguments\r\n"
-#define MSG_299 "299 File %s size %ld bytes\r\n"
-#define MSG_226 "226 Transfer complete\r\n"
-#define MSG_229 "229 Entering Extended Passive Mode (|||%s|)\r\n"
-#define MSG_227 "227 Entering Passive Mode (%d,%d,%d,%d,%d,%d)\r\n"
-#define MSG_215 "215 UNIX Type\r\n"
-#define MSG_257 "257 \"%s\" is the current directory\r\n"
-#define MSG_211 "211 - RETR <path>: retrieve a file\n\
-                 211 - QUIT: stop connection\r\n"
 
+#define MSG_125 "125 Data connection open, starting transfer\r\n"
+#define MSG_211 "211 - RETR <path>: retrieve a file\r\n"
+#define MSG_215 "215 UNIX Type\r\n"
+#define MSG_220 "220 srvFtp version 1.0\r\n"
+#define MSG_230 "230 User %s logged in\r\n"
+#define MSG_221 "221 Goodbye\r\n"
+#define MSG_226 "226 Transfer complete\r\n"
+#define MSG_227 "227 Entering Passive Mode (%d,%d,%d,%d,%d,%d)\r\n"
+#define MSG_229 "229 Entering Extended Passive Mode (|||%s|)\r\n"
+#define MSG_257 "257 \"%s\" is the current directory\r\n"
+#define MSG_299 "299 File %s size %ld bytes\r\n"
+#define MSG_331 "331 Password required for %s\r\n"
+#define MSG_501 "501 Syntax errors in parameters or arguments\r\n"
+#define MSG_502 "502 Command not implemented\r\n"
+#define MSG_530 "530 Login incorrect\r\n"
+#define MSG_550 "550 %s: no such file or directory\r\n"
+
+/* executes retr concurrently using sd as file destination
+ */
 void retr_wrapper(int sd, char* param);
-/* builds the espv response using the opened sd
+/* builds the pasv response using the opened sd
  * return: -1 on error
  *          0 on success
  */
@@ -182,8 +185,6 @@ int send_ans(int sd, char *message, ...)
     vsprintf(buffer, message, args);
     va_end(args);
     // send answer preformated and check errors
-    printf("is socket: %d\n", S_ISSOCK(sd));
-    printf("send_ans fd: %d\n", fcntl(sd, F_GETFD));
     if (send(sd, buffer, strlen(buffer), 0) == -1) {
         perror("send_ans:send");
         return 0;
@@ -209,18 +210,20 @@ int recv_cmd(int sd, char *operation, char *param)
         exit(EXIT_FAILURE);
     }
 
-    printf("client command: %s\n", buffer);
+    printf("-------Client Request-----\n%s\n", buffer);
     // expunge the terminator characters from the buffer
     buffer[strcspn(buffer, "\r\n")] = 0;
 
     // complex parsing of the buffer
     // extract command received in operation if not set \0
     // extract parameters of the operation in param if it needed
+    printf("Details:\n\n");
     token = strtok(buffer, " ");
     if (token == NULL || strlen(token) < 4){
         warn("not valid ftp command");
         return 0;
     }
+    printf("* Command: %s\n", token);
     if (operation[0] == '\0')
         strcpy(operation, token);
     if (strcmp(operation, token)){
@@ -231,6 +234,7 @@ int recv_cmd(int sd, char *operation, char *param)
     token = strtok(NULL, " ");
     if (token != NULL)
         strcpy(param, token);
+    printf("* Arg: %s\n", param);
     return 1;
 }
 
@@ -333,7 +337,8 @@ void operate(int sd)
         if (!recv_cmd(sd, op, param))
             return;
 
-        if (!strcmp(op, "RETR")) {
+        if (strcmp(op, "RETR") == 0) {
+            printf("Entering retr\n");
             retr_wrapper(transfer_chnl, param);
         } else if (strcmp(op, "QUIT") == 0) {
             send_ans(sd, MSG_221);
@@ -345,6 +350,8 @@ void operate(int sd)
             send_ans(sd, MSG_211);
         } else if (strcmp(op, "PASV") == 0)  {
             transfer_chnl = pasv(sd);
+        } else if(strcmp(op, "EPSV") == 0) {
+            transfer_chnl = epsv(sd);
         } else {
             send_ans(sd, MSG_502);
         }
@@ -414,7 +421,6 @@ int opensock_tcpsrv(char *address, char *service)
     if(inet_ntop(rp->ai_family, rp->ai_addr, ip_addr, INET6_ADDRSTRLEN)) {
         perror("inet_ntop");
     }
-    printf("Connected socket IP address: %s - %d\n", ip_addr, sd);
     // and return socket
     return sd;
 }
@@ -474,6 +480,8 @@ void retr_wrapper(int file_chnl, char *file_path) {
     socklen_t addr_len = sizeof(addr);
     int sd;
 
+    //send_ans(sd, MSG_125);
+    printf("Hijo\nHijo\nHijo\n");
     if(fork()) return;
 
     if(listen(file_chnl, 10) == -1) {
