@@ -25,8 +25,6 @@
 #define MSG_299 "299 File %s size %ld bytes\r\n"
 #define MSG_226 "226 Transfer complete\r\n"
 
-
-
 /**
  * function: receive and analize the answer from the server
  * sd: socket descriptor
@@ -48,9 +46,9 @@ void send_msg(int sd, char *operation, char *param);
 
 /**
  * function: simple input from keyboard
- * return: input without ENTER key
+ * return: input without \n character
  **/
-char * read_input();
+char *read_input();
 
 /**
  * function: login process from the client side
@@ -76,12 +74,12 @@ void quit(int sd);
  **/
 void operate(int sd);
 
-
 /**
  * Run with
  *         ./myftp <SERVER_IP> <SERVER_PORT>
  **/
-int main (int argc, char *argv[]) {
+int main (int argc, char *argv[]) 
+{
     int sd, addrstate;
     struct addrinfo hints, *results, *rp;
 
@@ -92,14 +90,16 @@ int main (int argc, char *argv[]) {
     }
 
     memset(&hints, 0, sizeof(hints));
+
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = 0;
     hints.ai_protocol = 0; // any protocol
 
     addrstate = getaddrinfo(argv[1], argv[2], &hints, &results);
+
     if(!addrstate) {
-        fprintf(stderr, "gaistrerror: %s\n", gai_strerror(addrstate));
+        fprintf(stderr, "Get address info, error: %s\n", gai_strerror(addrstate));
         exit(EXIT_FAILURE);
     }
 
@@ -125,7 +125,6 @@ int main (int argc, char *argv[]) {
     // if receive hello proceed with authenticate and operate if not warning
     if(!recv_msg(sd, HELLO_CODE, NULL)) {
         fprintf(stderr, "Hello message not received, quiting client...\n");
-
         close(sd);
     }
 
@@ -143,7 +142,8 @@ int main (int argc, char *argv[]) {
     return 0;
 }
 
-int recv_msg(int sd, int code, char *text) {
+int recv_msg(int sd, int code, char *text) 
+{
     char buffer[BUFSIZE], message[BUFSIZE];
     int recv_s, recv_code;
 
@@ -167,7 +167,8 @@ int recv_msg(int sd, int code, char *text) {
     return code == recv_code;
 }
 
-void send_msg(int sd, char *operation, char *param) {
+void send_msg(int sd, char *operation, char *param) 
+{
     char buffer[BUFSIZE] = "";
 
     // command formating
@@ -192,7 +193,7 @@ char *read_input() {
 }
 
 int authenticate(int sd) {
-    char *input, desc[100];
+    char *input = NULL, desc[100];
     int code;
 
     // ask for user
@@ -245,10 +246,7 @@ void get(int sd, char *file_name) {
     // open the file to write
     file = fopen(file_name, "w");
 
-
     //receive the file
-
-
 
     // close the file
     fclose(file);

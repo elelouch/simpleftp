@@ -19,8 +19,7 @@
 #define CMDSIZE 4
 #define PARSIZE 100
 #define BACKLOG_SIZE 10
-#define PORT_LEN 5 + 1 // (2^16) + '\0'
-
+#define PORT_MAX_LEN 5 + 1 // (2^16 = 65536, 5 caracteres maximo) + '\0'
 
 #define MSG_125 "125 Data connection open, starting transfer\r\n"
 #define MSG_211 "211 - RETR <path>: retrieve a file\r\n"
@@ -53,7 +52,7 @@ int send_pasv_ans(int cmd_chnl_sd, int file_chnl_sd);
  */
 int send_epsv_ans(int cmd_chnl_sd, int file_chnl_sd); 
 
-/* Opens a socket for a tcp server.
+/* Opens a socket for a tcp server. Executes the binding and frees the addrinfo struct.
  * If service is null, then the OS chooses the port.
  * return: server socket descriptor
  */
@@ -139,9 +138,8 @@ int main(int argc, char *argv[])
         perror("listen");
         exit(EXIT_FAILURE);
     }
-    
 
-    for (;;) {
+    while (1) {
         ssd = accept(msd, (struct sockaddr *)&peer_addr, &peer_len);
         handle_connection(ssd, msd);
     }
@@ -159,7 +157,7 @@ void handle_connection(int ssd, int msd)
     }
 
     if (!fork()) {
-        close(msd);
+        close(msd); // close parent
         send_ans(ssd, MSG_220);
         if (!authenticate(ssd)) {
             close(ssd);
@@ -177,7 +175,6 @@ void handle_connection(int ssd, int msd)
 int send_ans(int sd, char *message, ...)
 {
     char buffer[BUFSIZE];
-
 
     va_list args;
     va_start(args, message);
@@ -224,6 +221,7 @@ int recv_cmd(int sd, char *operation, char *param)
         return 0;
     }
     printf("* Command: %s\n", token);
+
     if (operation[0] == '\0')
         strcpy(operation, token);
     if (strcmp(operation, token)){
@@ -232,6 +230,7 @@ int recv_cmd(int sd, char *operation, char *param)
     }
 
     token = strtok(NULL, " ");
+
     if (token != NULL)
         strcpy(param, token);
     printf("* Arg: %s\n", param);
@@ -258,7 +257,7 @@ void retr(int sd, char *file_path)
     fseek(file, 0L, SEEK_SET);
     send_ans(sd, MSG_299, file_path, fsize);
 
-    // important delay for avoid problems with buffer size
+    // important delay to avoid problems with buffer size
     sleep(1);
 
     // send the file
@@ -326,20 +325,21 @@ int authenticate(int sd)
     return send_ans(sd, MSG_230, user);
 }
 
+// active -> client establishes the command channel, server is responsible for the data channel.
+// pasive -> client establishes both channels.
 void operate(int sd)
 {
     char op[CMDSIZE], param[PARSIZE];
-    int transfer_chnl = -1;
+    int data_chnl = -1;
 
-    for (;;) {
+    while (1) {
         op[0] = param[0] = '\0';
 
         if (!recv_cmd(sd, op, param))
             return;
 
         if (strcmp(op, "RETR") == 0) {
-            printf("Entering retr\n");
-            retr_wrapper(transfer_chnl, param);
+            retr_wrapper(data_chnl, param);
         } else if (strcmp(op, "QUIT") == 0) {
             send_ans(sd, MSG_221);
             close(sd);
@@ -348,10 +348,10 @@ void operate(int sd)
             send_ans(sd, MSG_215);
         } else if (strcmp(op, "FEAT") == 0) {
             send_ans(sd, MSG_211);
-        } else if (strcmp(op, "PASV") == 0)  {
-            transfer_chnl = pasv(sd);
-        } else if(strcmp(op, "EPSV") == 0) {
-            transfer_chnl = epsv(sd);
+        } else if (strcmp(op, "PASV") == 0)  { // listen to a data port
+            data_chnl = pasv(sd);
+        } else if(strcmp(op, "EPSV") == 0) { // clients start automatically this mode
+            data_chnl = epsv(sd);
         } else {
             send_ans(sd, MSG_502);
         }
@@ -429,7 +429,7 @@ int opensock_tcpsrv(char *address, char *service)
 int send_epsv_ans(int cmd_chnl_sd, int file_chnl_sd) {
     struct sockaddr_storage addr;
     socklen_t len = sizeof(addr);
-    char port_str[PORT_LEN];
+    char port_str[PORT_MAX_LEN];
 
     if(getsockname(file_chnl_sd, (struct sockaddr*) &addr, &len) == -1)
         return -1;
@@ -475,21 +475,20 @@ int pasv(int cmd_chnl)
     return file_chnl;
 }
 
-void retr_wrapper(int file_chnl, char *file_path) {
+void retr_wrapper(int data_chnl, char *file_path) {
     struct sockaddr_storage addr;
     socklen_t addr_len = sizeof(addr);
     int sd;
 
-    //send_ans(sd, MSG_125);
-    printf("Hijo\nHijo\nHijo\n");
     if(fork()) return;
 
-    if(listen(file_chnl, 10) == -1) {
+    // if child can't listen to data, exit.
+    if(listen(data_chnl, 10) == -1) {
         perror("retr_wrapper:listen");
         exit(EXIT_FAILURE);
     }
 
-    sd = accept(file_chnl, (struct sockaddr*) &addr, &addr_len);
+    sd = accept(data_chnl, (struct sockaddr*) &addr, &addr_len);
     if(sd == -1) {
         perror("retr_wrapper:accept");
         exit(EXIT_FAILURE);
