@@ -58,6 +58,7 @@ int send_epsv_ans(int cmd_chnl_sd, int file_chnl_sd);
  */
 int opensock_tcpsrv(char *address, char *service);
 
+/* Client asks to the server to listen to certain port*/
 int pasv(int sd);
 
 int epsv(int sd);
@@ -124,7 +125,7 @@ int main(int argc, char *argv[])
     // reserve sockets and variables space
     struct sockaddr_storage peer_addr; // container big enough to support both ipv4 and ipv6
     socklen_t peer_len = sizeof peer_addr;
-    int msd = 0, ssd = 0;
+    int sd = 0, peer_sd = 0;
 
     // arguments checking
     if (argc != 2) {
@@ -132,19 +133,19 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    msd = opensock_tcpsrv(NULL, "3490");
+    sd = opensock_tcpsrv(NULL, "3490");
 
-    if (listen(msd, BACKLOG_SIZE) == -1) {
+    if (listen(sd, BACKLOG_SIZE) == -1) {
         perror("listen");
         exit(EXIT_FAILURE);
     }
 
     while (1) {
-        ssd = accept(msd, (struct sockaddr *)&peer_addr, &peer_len);
-        handle_connection(ssd, msd);
+        peer_sd = accept(sd, (struct sockaddr *)&peer_addr, &peer_len);
+        handle_connection(peer_sd, sd);
     }
 
-    close(msd);
+    close(sd);
 
     return 0;
 }
@@ -261,9 +262,8 @@ void retr(int sd, char *file_path)
     sleep(1);
 
     // send the file
-    while ((bread = fread(buffer, BUFSIZE, 1, file))) {
+    while ((bread = fread(buffer, BUFSIZE, 1, file))) 
         send(sd, buffer, bread, 0);
-    }
 
     if (ferror(file))
         send_ans(sd, "Error while reading %s", file_path);
@@ -330,7 +330,7 @@ int authenticate(int sd)
 void operate(int sd)
 {
     char op[CMDSIZE], param[PARSIZE];
-    int data_chnl = -1;
+    int data_chnl = 0;
 
     while (1) {
         op[0] = param[0] = '\0';
@@ -338,7 +338,7 @@ void operate(int sd)
         if (!recv_cmd(sd, op, param))
             return;
 
-        if (strcmp(op, "RETR") == 0) {
+        if (strcmp(op, "RETR") == 0 && data_chnl) {
             retr_wrapper(data_chnl, param);
         } else if (strcmp(op, "QUIT") == 0) {
             send_ans(sd, MSG_221);
@@ -348,10 +348,8 @@ void operate(int sd)
             send_ans(sd, MSG_215);
         } else if (strcmp(op, "FEAT") == 0) {
             send_ans(sd, MSG_211);
-        } else if (strcmp(op, "PASV") == 0)  { // listen to a data port
+        } else if (strcmp(op, "PASV") == 0)  { // server listens for a connection on a certain port
             data_chnl = pasv(sd);
-        } else if(strcmp(op, "EPSV") == 0) { // clients start automatically this mode
-            data_chnl = epsv(sd);
         } else {
             send_ans(sd, MSG_502);
         }
@@ -384,8 +382,7 @@ int opensock_tcpsrv(char *address, char *service)
     hints.ai_flags = AI_PASSIVE;     /* For wildcard IP address */
 
     addrstat = getaddrinfo(address, service, &hints, &p);
-    if (addrstat != 0)
-    {
+    if (addrstat != 0) {
         fprintf(stderr, "getaddrinfo string: %s\n", gai_strerror(addrstat));
         return -1;
     }
@@ -444,13 +441,13 @@ int send_epsv_ans(int cmd_chnl_sd, int file_chnl_sd) {
     return 0;
 }
 
-int send_pasv_ans(int cmd_chnl_sd, int file_chnl_sd) {
+int send_pasv_ans(int cmd_chnl_sd, int data_chnl_sd) {
     struct sockaddr_in addr;
     socklen_t len = sizeof(addr);
     int a, b, c, d, port, gsn;
     char ipv4_str[INET_ADDRSTRLEN];
 
-    gsn = getsockname(file_chnl_sd, (struct sockaddr*) &addr, &len);
+    gsn = getsockname(data_chnl_sd, (struct sockaddr*) &addr, &len);
     if(gsn == -1)
         return -1;
 
