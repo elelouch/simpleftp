@@ -9,14 +9,22 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+// Constants
 #define BUFSIZE 512
 #define PORT_SIZE 6 // "65536" + '\0'
+#define FTP_PORT_STR "21"
+                    
+// Codes
 #define HELLO_CODE 220
 #define GOODBYE_CODE 220
 #define WRONG_LOGIN_CODE 550
 #define LOGGED_CODE 230
-#define NEED_PASSWORD_CODE 331
+#define PASSWORD_REQUIRED_CODE 331
+#define TRANSFER_COMPLETE_CODE 226
+#define ENTERING_PASV_MODE_CODE 227
+#define OPENING_BINARY_CONN_CODE 150
 
+// Messages
 #define MSG_220 "220 srvFtp version 1.0\r\n"
 #define MSG_331 "331 Password required for %s\r\n"
 #define MSG_230 "230 User %s logged in\r\n"
@@ -30,13 +38,12 @@
 
 #define PROMPT "ftp> "
 
+// Structured passed by function calls
 struct conn_stats {
-    char ip_addr[BUFSIZE];
-    char data_port[PORT_SIZE];
-    char cmd_port[PORT_SIZE];
-    int passivemode;
-    int data_chnl;
+    struct sockaddr data_addr;
+    struct sockaddr cmd_addr;
     int cmd_chnl;
+    int passivemode;
 };
 
 /* Parses the pasv answer and calculates the port. 
@@ -46,7 +53,8 @@ struct conn_stats {
  * dst: port obtained*/
 void parse_pasvres (char *src, char *dst);
 
-void close_dataconn (struct conn_stats* stats);
+/* Similar to pasv with port command */
+void parse_portres(char *src, char *dst);
 /**
  * function: receive and analize the answer from the server
  * sd: socket descriptor
@@ -95,60 +103,79 @@ void quit(int sd);
  **/
 void operate(struct conn_stats*);
 
+void ls(struct conn_stats*);
+
+/* creates an active tcp socket.
+ * name: domain name
+ * port: service port
+ * returns: socket file descriptor to the service */
+int tcp_connection(const char*, const char*, struct sockaddr *);
+
+/* creates a passive tcp socket
+ * name: domain name
+ * port: tcp connection to that port
+ * returns: socket file descriptor of the created service */
+int tcp_listen();
+
+/* Setups passive or active data connection.
+ * The opened file must be handled properly afterwards.
+ * returns: data connection file descriptor, 0 if couldn't set connection*/
+FILE *dataconn (struct conn_stats*, const char*);
+
+void store(char *, struct conn_stats*);
+
+/* obtains ip address from the sockaddr structure.
+ *
+ * addr: sockaddr structure that contains 
+ * dst: destiny string, should have a length of at least INET6_ADDRSTRLEN
+ */
+void ip_from_addr(struct sockaddr *, char *);
+
 /**
  * Run with
- *         ./myftp <SERVER_IP> <SERVER_PORT>
+ *         ./myftp <SERVER_NAME> <SERVER_PORT>
  **/
-
-FILE* dataconn (const char*, int, int);
-
-int tcp_connection (const char* ip, const char* port);
-
-int setup_dataconn(struct conn_stats*);
-
-int main (int argc, char *argv[]) 
+int main(int argc, char *argv[]) 
 {
     int sd;
     struct conn_stats program_stats;
+    char *network_address, *port;
 
     // arguments checking
-    if(argc < 2) {
-        fprintf(stderr, "Usage: %s <SERVER_NAME> [<SERVER_PORT>]\n", argv[0]);
+    if(argc <= 2) {
+        fprintf(stderr, "Usage: %s [OPTION]... SERVER_NAME SERVER_PORT\n"
+                "\t OPTION: -A, enable active mode\n", argv[0]);
         exit(EXIT_FAILURE);
     }
 
+    network_address = argv[argc - 2];
+    port = argv[argc - 1];
 
-    if (argc == 2) {
-        sd = tcp_connection(argv[1], "21");
-    }
-
-    if (argc == 3) {
-        sd = tcp_connection(argv[1], argv[2]);
-    }
-
+    sd = tcp_connection(network_address, port, &program_stats.cmd_addr);
 
     if(!sd) {
-        fprintf(stderr, "Couldn't connect to server\n");
+        fprintf(stderr, "main: Couldn't connect to server, name or port might be wrong\n");
         exit(EXIT_FAILURE);
     }
     // if receive hello proceed with authenticate and operate if not warning
     if(!recv_msg(sd, HELLO_CODE, NULL)) {
-        fprintf(stderr, "Hello message not received, quiting client...\n");
+        fprintf(stderr, "main: Hello message not received, quiting client...\n");
         exit(EXIT_FAILURE);
         close(sd);
     }
 
     if(!authenticate(sd)) {
-        fprintf(stderr, "Couldn't authenticate, quitting...\n");
         exit(EXIT_FAILURE);
         close(sd);
     }
 
-    program_stats.cmd_chnl = sd;
-    program_stats.data_chnl = 0;
     program_stats.passivemode = 1;
-    strncpy(program_stats.ip_addr, argv[1], BUFSIZE);
-// strncpy(program_stats.cmd_port, argv[2], PORT_SIZE);
+    program_stats.cmd_chnl = sd;
+
+    if(getopt(argc, argv, "A") == 'A') {
+        program_stats.passivemode = 0;
+    }
+
     
     operate(&program_stats);
 
@@ -168,12 +195,12 @@ int recv_msg(int sd, int code, char *text)
     // error checking
     if (recv_s == -1) {
         perror("recv");
-        fprintf(stderr, "Error during recv");
+        fprintf(stderr, "recv_msg: Error during recv");
     }
 
     if (recv_s == 0) {
         close(sd);
-        fprintf(stderr, "connection closed by host\n");
+        fprintf(stderr, "recv_msg: Connection closed by host\n");
         exit(EXIT_FAILURE);
     }
 
@@ -188,7 +215,7 @@ int recv_msg(int sd, int code, char *text)
 
 void send_msg(int sd, char *operation, char *param) 
 {
-    char buffer[BUFSIZE] = "";
+    char buffer[BUFSIZE] = {'\0'};
 
     // command formating
     if (param != NULL)
@@ -213,7 +240,6 @@ char *read_input() {
 
 int authenticate(int sd) {
     char *input = NULL, desc[100];
-    int code;
 
     // ask for user
     printf("username: ");
@@ -226,13 +252,13 @@ int authenticate(int sd) {
     input = NULL;
 
     // wait to receive password requirement and check for errors
-    if(!recv_msg(sd, NEED_PASSWORD_CODE, desc)) {
-        fprintf(stderr, "Abnormal flow: %s\n", desc);
+    if(!recv_msg(sd, PASSWORD_REQUIRED_CODE, desc)) {
+        fprintf(stderr, "authenticate: Abnormal flow: %s\n", desc);
         return 0;
     }
 
     // ask for password
-    printf("passwd: ");
+    printf("password: ");
     input = read_input();
 
     // send the command to the server
@@ -241,45 +267,53 @@ int authenticate(int sd) {
     // release memory
     free(input);
 
-    // wait for answer and process it and check for errors
+    // wait for the answer, process it and check for errors
     if(!recv_msg(sd, LOGGED_CODE, desc)) {
-        fprintf(stderr, "Incorrect credentials: %s\n", desc);
+        fprintf(stderr, "authenticate: Incorrect credentials: %s\n", desc);
         return 0;
     }
 
     return 1;
 }
 
+
 void get(char *file_name,struct conn_stats *stats) {
-    char desc[BUFSIZE], buffer[BUFSIZE];
-    int f_size, recv_s, r_size = BUFSIZE;
+    char buffer[BUFSIZE];
+    int cmd_sd = stats -> cmd_chnl;
     char c;
-    FILE *file;
-    FILE *file_received;
+    FILE *write_file;
+    FILE *read_file;
+
+
+    // error checking missing
+    // setups data channel
+    read_file = dataconn(stats, "r");
 
     // send the RETR command to the server
-    send_msg(stats -> cmd_chnl, "RETR", file_name);
+    send_msg(cmd_sd, "RETR", file_name);
+    
     // check for the response
-    recv_msg(stats -> cmd_chnl, 226, buffer);
-    // parsing the file size from the answer received
-    sscanf(buffer, "File %*s size %d bytes", &f_size);
+    recv_msg(cmd_sd, 0, buffer);
 
-    // open the file to write
-    file = fopen(file_name, "w");
-    file_received = fdopen(stats -> data_chnl, "r");
+    // parsing the write_file size from the answer received
+    // sscanf(buffer, "File %*s size %d bytes", &f_size);
 
-    //receive the file
-    while ((c = getc(file_received)) != EOF) {
-        putc(c, file);
+    // open the write_file to write
+    write_file = fopen(file_name, "w");
+    // opens a duplicate of the data channel
+
+    //receive the write_file
+    while ((c = getc(read_file)) != EOF) {
+        putc(c, write_file);
     }
 
-    // close the file
-    fclose(file);
-    fclose(file_received);
+    // close the files 
+    fclose(write_file);
+    fclose(read_file);
 
     // receive the OK from the server
-    if(!recv_msg(stats -> cmd_chnl, 220, NULL)) {
-        fprintf(stderr, "Error receiving value\n");
+    if(!recv_msg(stats -> cmd_chnl, TRANSFER_COMPLETE_CODE, NULL)) {
+        fprintf(stderr, "get: Transfer complete code not received\n");
     }
 }
 
@@ -288,7 +322,7 @@ void quit(int sd) {
     send_msg(sd, "QUIT", NULL);
     // receive the answer from the server
     if(!recv_msg(sd, GOODBYE_CODE, NULL)) {
-        fprintf(stderr, "couldn't close server connection properly\n");
+        fprintf(stderr, "quit: Couldn't close server connection properly\n");
         close(sd);
         exit(EXIT_FAILURE);
     }
@@ -304,17 +338,17 @@ void operate(struct conn_stats *stats) {
         if (!input)
             continue; // avoid empty input
         op = strtok(input, " ");
-        // free(input);
-        if (strcmp(op, "get") == 0) {
-            // use data transfer process before (my comm)
-            param = strtok(NULL, " ");
+        param = strtok(NULL, " ");
 
-            if(!setup_dataconn(stats)) continue;
+        if (strcmp(op, "get") == 0) {
             get(param, stats);
-            close_dataconn(stats);
         } else if (strcmp(op, "quit") == 0) {
             quit(stats -> cmd_chnl);
             break;
+        } else if (strcmp(op, "ls") == 0) {
+            ls(stats);
+        } else if(strcmp(op, "send") == 0) {
+            store(param, stats);
         } else {
             // new operations in the future
             printf("TODO: unexpected command\n");
@@ -324,48 +358,58 @@ void operate(struct conn_stats *stats) {
     free(input);
 }
 
-/* setup passive or active data connection */
-int setup_dataconn (struct conn_stats *stats) 
+FILE *dataconn (struct conn_stats *stats, const char* mode) 
 {
-    char buff[BUFSIZE];
-    char port[PORT_SIZE];
-    char *passive_mode_res;
-    
-    int upper_port;
-    int lower_port;
+    char buff[BUFSIZE] = {'\0'},
+         ip_addr[BUFSIZE] = {'\0'},
+         port[PORT_SIZE] = {'\0'};
+    int data_sd, server_sd;
+    int octal_0, octal_1, octal_2, octal_3;
+    struct sockaddr peer_addr;
+    socklen_t peer_addrlen = sizeof(peer_addr);
+
+    ip_from_addr(&stats -> cmd_addr, ip_addr);
 
     if(stats -> passivemode) {
         send_msg(stats -> cmd_chnl, "PASV", NULL);
-
-        if(!recv_msg(stats -> cmd_chnl, 227, buff)) {
+        if(!recv_msg(stats -> cmd_chnl, ENTERING_PASV_MODE_CODE, buff)) {
+            fprintf(stderr, "dataconn: Abnormal flow\n");
             return 0;
         }
 
-        parse_pasvres(buff, stats -> data_port);
+        parse_pasvres(buff, port);
+        data_sd = tcp_connection(ip_addr, port, &stats -> data_addr);
 
-        stats -> data_chnl = tcp_connection(stats -> ip_addr, stats -> data_port);
+        if(!data_sd) {
+            fprintf(stderr, "dataconn: Couldn't setup data connection\n");
+            return NULL;
+        }
 
-        return stats -> data_chnl;
+        return fdopen(data_sd, mode);
     }
 
-    fprintf(stderr, "Couldn't initialize data channel\n");
+    sscanf(ip_addr, "%d.%d.%d.%d", &octal_0, &octal_1, &octal_2, &octal_3);
+    sprintf(buff, "%d,%d,%d,%d", octal_0, octal_1, octal_2, octal_3);
 
-    return 0;
+    send_msg(stats -> cmd_chnl, "PORT", buff);
+    recv_msg(stats -> cmd_chnl, 0, NULL); // consumes either 125 or 150, we can check if the command is 550 or 530
+    
+    data_sd = tcp_listen();
+
+    server_sd = accept(data_sd, &peer_addr, &peer_addrlen); // waits for server connection
+
+    return fdopen(server_sd, mode);
 }
 
-/* return socket of a tcp connection to the server */
-int tcp_connection (const char *ip, const char *port) 
+int tcp_connection (const char *name, const char *port, struct sockaddr* addr) 
 {
     struct addrinfo hints;
-    struct addrinfo *results, *rp;
-    uint16_t u_port = 0;
-    int addrstate = 0;
-    int sd = 0;
+    struct addrinfo *results = NULL, *rp = NULL;
+    int addrstate = 0, sd = 0;
 
-    if(!ip || !port)  {
-        return 0;
-    }
-    printf("ip used: %s, port used: %s\n", ip, port);
+    if(!name || !port) return 0;
+
+    printf("name used: %s, port used: %s\n", name, port);
 
     memset(&hints, 0, sizeof(hints));
 
@@ -375,14 +419,12 @@ int tcp_connection (const char *ip, const char *port)
     hints.ai_protocol = 0; // any protocol
 
 
-    addrstate = getaddrinfo(ip, port, &hints, &results);
-
-    if(addrstate) {
-        fprintf(stderr, "getaddrinfo, error: %s\n", gai_strerror(addrstate));
+    if((addrstate = getaddrinfo(name, port, &hints, &results)) != 0) {
+        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(addrstate));
         return 0;
     }
 
-    // create socket and check for errors
+    // create socket and connect to the first addrinfo available on the list, check for errors
     for(rp = results; rp != NULL; rp = rp->ai_next) {
         sd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
         if(sd == -1) {
@@ -391,6 +433,7 @@ int tcp_connection (const char *ip, const char *port)
         }
 
         if(connect(sd, rp->ai_addr, rp->ai_addrlen) != -1) {
+            *addr = *(rp -> ai_addr);
             break;
         }
 
@@ -402,9 +445,67 @@ int tcp_connection (const char *ip, const char *port)
     return sd;
 }
 
-void close_dataconn(struct conn_stats *stats) 
+int tcp_listen() 
 {
-    close(stats -> data_chnl);
+    struct addrinfo hints;
+    struct addrinfo *results = NULL, *rp = NULL;
+    int addrstate = 0, sd = 0, portmax = 1 << 16;
+    char port_str[PORT_SIZE];
+
+    memset(&hints, 0, sizeof(hints));
+
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_PASSIVE;
+    hints.ai_protocol = 0; // any protocol
+    hints.ai_addr = NULL;
+    hints.ai_next = NULL;
+    hints.ai_canonname = NULL;
+
+    for(int i = 1025; i < portmax; i++) {
+        sprintf(port_str, "%d", i);
+
+        if((addrstate = getaddrinfo(NULL, port_str, &hints, &results)) == 0){
+            break;
+        } 
+    }
+
+    if (addrstate != 0) {
+        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(addrstate));
+        return 0;
+    }
+
+    // create socket and connect to the first addrinfo available on the list, check for errors
+    for (rp = results; rp != NULL; rp = rp->ai_next) {
+        sd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        if(sd == -1) {
+            perror("socket");
+            continue;
+        }
+
+        if(bind(sd, rp->ai_addr, rp->ai_addrlen) != -1) {
+            break;
+        }
+
+        perror("connect");
+        close(sd);
+    }
+
+    freeaddrinfo(results);
+
+    if(!rp) {
+        fprintf(stderr, "tcp_listen: Couldn't bind\n");
+        return 0;
+    }
+
+    if(listen(sd, 1) == -1) {
+        perror("tcp_listen");
+        close(sd);
+        return 0;
+    }
+
+    return sd;
+
 }
 
 void parse_pasvres(char *src, char *dst) 
@@ -421,4 +522,78 @@ void parse_pasvres(char *src, char *dst)
     sscanf(inside_parentheses, "%*d,%*d,%*d,%*d,%d,%d", &port_upperbits, &port_lowerbits);
     sprintf(buf, "%d", port_upperbits * 256 + port_lowerbits);
     strncpy(dst, buf, PORT_SIZE);
+}
+
+void ls(struct conn_stats *stats) 
+{
+    FILE *data = NULL;
+    char buffer[BUFSIZE] = {'\0'};
+
+    data = dataconn(stats, "r");
+
+    send_msg(stats -> cmd_chnl, "LIST", NULL);
+
+    recv_msg(stats -> cmd_chnl, 0, buffer);
+
+    while(!feof(data)) {
+        fread(buffer, sizeof(char), BUFSIZE, data);
+        printf("%s", buffer);
+        memset(buffer, 0, BUFSIZE);
+    }
+
+    fclose(data);
+
+    if(!recv_msg(stats -> cmd_chnl, TRANSFER_COMPLETE_CODE, NULL)) {
+        fprintf(stderr, "get: Transfer complete code not received\n");
+    }
+
+}
+
+void store(char *filename, struct conn_stats *stats) 
+{
+    FILE *data = NULL, *send_file;
+    char buffer[BUFSIZE] = {'\0'};
+
+    data = dataconn(stats, "w");
+
+    send_file = fopen(filename, "r");
+
+    send_msg(stats -> cmd_chnl, "STOR", filename);
+
+    recv_msg(stats -> cmd_chnl, 0, buffer);
+
+    while(!feof(send_file)) {
+        fread(buffer, sizeof(char), BUFSIZE, send_file);
+        fwrite(buffer, sizeof(char), BUFSIZE, data);
+    }
+
+    fclose(data);
+
+    if(!recv_msg(stats -> cmd_chnl, TRANSFER_COMPLETE_CODE, NULL)) {
+        fprintf(stderr, "get: Transfer complete code not received\n");
+    }
+}
+
+void parse_portres(char *src, char *dst) 
+{
+
+}
+
+void ip_from_addr(struct sockaddr *addr, char *dst) 
+{
+    struct in_addr *inet_addr;
+    struct in6_addr *inet6_addr;
+    int af;
+
+    if(!addr) return;
+
+    af = addr -> sa_family;
+
+    if (af == AF_INET) {
+        inet_addr = &((struct sockaddr_in*) addr) -> sin_addr;
+        inet_ntop(af, inet_addr, dst, INET6_ADDRSTRLEN);
+    } else {
+        inet6_addr = &((struct sockaddr_in6*) addr) -> sin6_addr;
+        inet_ntop(af, inet6_addr, dst, INET6_ADDRSTRLEN);
+    }
 }
