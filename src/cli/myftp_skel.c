@@ -10,8 +10,9 @@
 #include <arpa/inet.h>
 
 // Constants
+#define DOMAINLEN 256
 #define BUFSIZE 512
-#define PORT_SIZE 6 // "65536" + '\0'
+#define PORTLEN 6 // "65536" + '\0'
 #define FTP_PORT_STR "21"
                     
 // Codes
@@ -40,8 +41,6 @@
 
 // Structured passed by function calls
 struct conn_stats {
-    struct sockaddr data_addr;
-    struct sockaddr cmd_addr;
     int cmd_chnl;
     int passivemode;
 };
@@ -53,8 +52,6 @@ struct conn_stats {
  * dst: port obtained*/
 void parse_pasvres (char *src, char *dst);
 
-/* Similar to pasv with port command */
-void parse_portres(char *src, char *dst);
 /**
  * function: receive and analize the answer from the server
  * sd: socket descriptor
@@ -106,30 +103,30 @@ void operate(struct conn_stats*);
 void ls(struct conn_stats*);
 
 /* creates an active tcp socket.
- * name: domain name
+ * stats: domain name of the service
  * port: service port
  * returns: socket file descriptor to the service */
-int tcp_connection(const char*, const char*, struct sockaddr *);
+int tcp_connection(const char* name, const char* port);
 
 /* creates a passive tcp socket
  * name: domain name
- * port: tcp connection to that port
+ * port_str: 
  * returns: socket file descriptor of the created service */
-int tcp_listen();
+int tcp_listen(char *port_str);
 
 /* Setups passive or active data connection.
  * The opened file must be handled properly afterwards.
  * returns: data connection file descriptor, 0 if couldn't set connection*/
-FILE *dataconn (struct conn_stats*, const char*);
+FILE *dataconn(struct conn_stats*, const char* mode);
 
-void store(char *, struct conn_stats*);
+void store(char *filename, struct conn_stats *stats);
 
 /* obtains ip address from the sockaddr structure.
  *
- * addr: sockaddr structure that contains 
+ * sd: socket descriptor
  * dst: destiny string, should have a length of at least INET6_ADDRSTRLEN
  */
-void ip_from_addr(struct sockaddr *, char *);
+void ip_from_sd(int sd, char *dst);
 
 /**
  * Run with
@@ -138,8 +135,8 @@ void ip_from_addr(struct sockaddr *, char *);
 int main(int argc, char *argv[]) 
 {
     int sd;
-    struct conn_stats program_stats;
     char *network_address, *port;
+    struct conn_stats stats;
 
     // arguments checking
     if(argc <= 2) {
@@ -151,7 +148,7 @@ int main(int argc, char *argv[])
     network_address = argv[argc - 2];
     port = argv[argc - 1];
 
-    sd = tcp_connection(network_address, port, &program_stats.cmd_addr);
+    sd = tcp_connection(network_address, port);
 
     if(!sd) {
         fprintf(stderr, "main: Couldn't connect to server, name or port might be wrong\n");
@@ -169,15 +166,14 @@ int main(int argc, char *argv[])
         close(sd);
     }
 
-    program_stats.passivemode = 1;
-    program_stats.cmd_chnl = sd;
+    stats.passivemode = 1;
+    stats.cmd_chnl = sd;
 
     if(getopt(argc, argv, "A") == 'A') {
-        program_stats.passivemode = 0;
+        stats.passivemode = 0;
     }
 
-    
-    operate(&program_stats);
+    operate(&stats);
 
     // close socket
     close(sd);
@@ -358,17 +354,18 @@ void operate(struct conn_stats *stats) {
     free(input);
 }
 
-FILE *dataconn (struct conn_stats *stats, const char* mode) 
+FILE *dataconn(struct conn_stats *stats, const char* mode) 
 {
     char buff[BUFSIZE] = {'\0'},
-         ip_addr[BUFSIZE] = {'\0'},
-         port[PORT_SIZE] = {'\0'};
+         ip_addr[INET6_ADDRSTRLEN] = {'\0'},
+         port[PORTLEN] = {'\0'};
     int data_sd, server_sd;
     int octal_0, octal_1, octal_2, octal_3;
     struct sockaddr peer_addr;
     socklen_t peer_addrlen = sizeof(peer_addr);
 
-    ip_from_addr(&stats -> cmd_addr, ip_addr);
+    // error checking
+    ip_from_sd(stats -> cmd_chnl, ip_addr);
 
     if(stats -> passivemode) {
         send_msg(stats -> cmd_chnl, "PASV", NULL);
@@ -377,31 +374,39 @@ FILE *dataconn (struct conn_stats *stats, const char* mode)
             return 0;
         }
 
+        // error checking
         parse_pasvres(buff, port);
-        data_sd = tcp_connection(ip_addr, port, &stats -> data_addr);
+
+        data_sd = tcp_connection(ip_addr, port);
 
         if(!data_sd) {
-            fprintf(stderr, "dataconn: Couldn't setup data connection\n");
+            fprintf(stderr, "dataconn: couldn't setup data connection\n");
             return NULL;
         }
 
         return fdopen(data_sd, mode);
     }
-
+    
     sscanf(ip_addr, "%d.%d.%d.%d", &octal_0, &octal_1, &octal_2, &octal_3);
     sprintf(buff, "%d,%d,%d,%d", octal_0, octal_1, octal_2, octal_3);
 
     send_msg(stats -> cmd_chnl, "PORT", buff);
+
     recv_msg(stats -> cmd_chnl, 0, NULL); // consumes either 125 or 150, we can check if the command is 550 or 530
     
-    data_sd = tcp_listen();
+    data_sd = tcp_listen(port);
+
+    if(!data_sd) {
+        fprintf(stderr, "dataconn: couldn't listen to tcp socket");
+        return NULL;
+    }
 
     server_sd = accept(data_sd, &peer_addr, &peer_addrlen); // waits for server connection
 
     return fdopen(server_sd, mode);
 }
 
-int tcp_connection (const char *name, const char *port, struct sockaddr* addr) 
+int tcp_connection (const char* name, const char* port) 
 {
     struct addrinfo hints;
     struct addrinfo *results = NULL, *rp = NULL;
@@ -413,7 +418,7 @@ int tcp_connection (const char *name, const char *port, struct sockaddr* addr)
 
     memset(&hints, 0, sizeof(hints));
 
-    hints.ai_family = AF_UNSPEC;
+    hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = 0;
     hints.ai_protocol = 0; // any protocol
@@ -433,7 +438,6 @@ int tcp_connection (const char *name, const char *port, struct sockaddr* addr)
         }
 
         if(connect(sd, rp->ai_addr, rp->ai_addrlen) != -1) {
-            *addr = *(rp -> ai_addr);
             break;
         }
 
@@ -445,16 +449,16 @@ int tcp_connection (const char *name, const char *port, struct sockaddr* addr)
     return sd;
 }
 
-int tcp_listen() 
+int tcp_listen(char *port_str_dst) 
 {
     struct addrinfo hints;
     struct addrinfo *results = NULL, *rp = NULL;
     int addrstate = 0, sd = 0, portmax = 1 << 16;
-    char port_str[PORT_SIZE];
+    char port_str[PORTLEN];
 
     memset(&hints, 0, sizeof(hints));
 
-    hints.ai_family = AF_UNSPEC;
+    hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_PASSIVE;
     hints.ai_protocol = 0; // any protocol
@@ -487,7 +491,7 @@ int tcp_listen()
             break;
         }
 
-        perror("connect");
+        perror("bind");
         close(sd);
     }
 
@@ -504,6 +508,8 @@ int tcp_listen()
         return 0;
     }
 
+    strncpy(port_str_dst, port_str, PORTLEN);
+
     return sd;
 
 }
@@ -511,7 +517,7 @@ int tcp_listen()
 void parse_pasvres(char *src, char *dst) 
 {
     // reference: Entering Passive Mode (x,x,x,x,y,y)
-    char buf[PORT_SIZE];
+    char buf[PORTLEN];
     char *inside_parentheses;
     int port_lowerbits = 0;
     int port_upperbits = 0;
@@ -521,7 +527,7 @@ void parse_pasvres(char *src, char *dst)
 
     sscanf(inside_parentheses, "%*d,%*d,%*d,%*d,%d,%d", &port_upperbits, &port_lowerbits);
     sprintf(buf, "%d", port_upperbits * 256 + port_lowerbits);
-    strncpy(dst, buf, PORT_SIZE);
+    strncpy(dst, buf, PORTLEN);
 }
 
 void ls(struct conn_stats *stats) 
@@ -574,26 +580,27 @@ void store(char *filename, struct conn_stats *stats)
     }
 }
 
-void parse_portres(char *src, char *dst) 
+void ip_from_sd(int sd, char *dst) 
 {
-
-}
-
-void ip_from_addr(struct sockaddr *addr, char *dst) 
-{
-    struct in_addr *inet_addr;
-    struct in6_addr *inet6_addr;
+    struct sockaddr addr;
+    socklen_t addrlen = sizeof(addr);
     int af;
 
-    if(!addr) return;
+    if(!sd || !dst){
+        fprintf(stderr, "ip_from_sd: invalid arguments\n");
+        return;
+    }
 
-    af = addr -> sa_family;
+    if(getpeername(sd, &addr, &addrlen) == -1) {
+        fprintf(stderr, "getpeername");
+        return;
+    }
+
+    af = addr.sa_family;
 
     if (af == AF_INET) {
-        inet_addr = &((struct sockaddr_in*) addr) -> sin_addr;
-        inet_ntop(af, inet_addr, dst, INET6_ADDRSTRLEN);
+        inet_ntop(af, &((struct sockaddr_in*) &addr) -> sin_addr, dst, INET_ADDRSTRLEN);
     } else {
-        inet6_addr = &((struct sockaddr_in6*) addr) -> sin6_addr;
-        inet_ntop(af, inet6_addr, dst, INET6_ADDRSTRLEN);
+        inet_ntop(af, &((struct sockaddr_in6*) &addr) -> sin6_addr, dst, INET6_ADDRSTRLEN);
     }
 }
