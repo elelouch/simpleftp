@@ -164,7 +164,7 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
     // if receive hello proceed with authenticate and operate if not warning
-    if(!strict_recv_msg(sd, HELLO_CODE, NULL)) {
+    if(!recv_msg(sd, HELLO_CODE, NULL)) {
         fprintf(stderr, "main: Hello message not received, quiting client...\n");
         exit(EXIT_FAILURE);
         close(sd);
@@ -190,7 +190,7 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-int recv_msg(int sd, int code, char *text) 
+int recv_msg(int sd, char *text) 
 {
     char buffer[BUFSIZE], message[BUFSIZE];
     int recv_s, recv_code;
@@ -205,7 +205,7 @@ int recv_msg(int sd, int code, char *text)
 
     if (recv_s == 0) {
         close(sd);
-        fprintf(stderr, "strict_recv_msg: Connection closed by host\n");
+        fprintf(stderr, "recv_msg: Connection closed by host\n");
         exit(EXIT_FAILURE);
     }
 
@@ -257,7 +257,7 @@ int authenticate(int sd) {
     input = NULL;
 
     // wait to receive password requirement and check for errors
-    if(!strict_recv_msg(sd, PASSWORD_REQUIRED_CODE, desc)) {
+    if(!recv_msg(sd, desc)) {
         fprintf(stderr, "authenticate: Abnormal flow: %s\n", desc);
         return 0;
     }
@@ -273,7 +273,7 @@ int authenticate(int sd) {
     free(input);
 
     // wait for the answer, process it and check for errors
-    if(!strict_recv_msg(sd, LOGGED_CODE, desc)) {
+    if(!recv_msg(sd, desc)) {
         fprintf(stderr, "authenticate: Incorrect credentials: %s\n", desc);
         return 0;
     }
@@ -298,7 +298,7 @@ void get(char *file_name,struct conn_stats *stats) {
     send_msg(cmd_sd, "RETR", file_name);
     
     // check for the response
-    strict_recv_msg(cmd_sd, 0, buffer);
+    recv_msg(cmd_sd, buffer);
 
     // parsing the write_file size from the answer received
     // sscanf(buffer, "File %*s size %d bytes", &f_size);
@@ -317,7 +317,7 @@ void get(char *file_name,struct conn_stats *stats) {
     fclose(read_file);
 
     // receive the OK from the server
-    if(!strict_recv_msg(stats -> cmd_chnl, TRANSFER_COMPLETE_CODE, NULL)) {
+    if(!recv_msg(stats -> cmd_chnl, TRANSFER_COMPLETE_CODE, NULL)) {
         fprintf(stderr, "get: Transfer complete code not received\n");
     }
 }
@@ -326,7 +326,7 @@ void quit(int sd) {
     // send command QUIT to the client
     send_msg(sd, "QUIT", NULL);
     // receive the answer from the server
-    if(!strict_recv_msg(sd, GOODBYE_CODE, NULL)) {
+    if(!recv_msg(sd, NULL)) {
         fprintf(stderr, "quit: Couldn't close server connection properly\n");
         close(sd);
         exit(EXIT_FAILURE);
@@ -382,7 +382,7 @@ FILE *dataconn(struct conn_stats *stats, const char* mode)
 
 
         send_msg(stats -> cmd_chnl, "PASV", NULL);
-        if(!strict_recv_msg(stats -> cmd_chnl, ENTERING_PASV_MODE_CODE, buff)) {
+        if(!recv_msg(stats -> cmd_chnl, buff)) {
             fprintf(stderr, "dataconn: Abnormal flow\n");
             return 0;
         }
