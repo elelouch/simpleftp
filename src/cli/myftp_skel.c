@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <netdb.h>
 #include <string.h>
 #include <unistd.h>
@@ -24,6 +25,7 @@
 #define TRANSFER_COMPLETE_CODE 226
 #define ENTERING_PASV_MODE_CODE 227
 #define OPENING_BINARY_CONN_CODE 150
+#define OK_CODE 200
 
 // Messages
 #define MSG_220 "220 srvFtp version 1.0\r\n"
@@ -58,9 +60,15 @@ void parse_pasvres (char *src, char *dst);
  * code: three digit code to check if received
  * text: normally NULL. If a pointer is received as parameter
  *       then it is setted as the optional part of the message.
- * return: result of code checking
+ * return: code received in the message
  **/
-int recv_msg(int sd, int code, char *text);
+int recv_msg(int sd, char *text);
+
+/**
+ * similar to strict_recv_msg, but loose. 
+ * Just compares the first digit of both codes.
+ */
+int loose_recv_msg(int sd, int code, char *text);
 
 /**
  * function: send command formated to the server
@@ -140,8 +148,9 @@ int main(int argc, char *argv[])
 
     // arguments checking
     if(argc <= 2) {
-        fprintf(stderr, "Usage: %s [OPTION]... SERVER_NAME SERVER_PORT\n"
-                "\t OPTION: -A, enable active mode\n", argv[0]);
+        fprintf(stderr, "Usage: %s [-OPTIONS]... SERVER_NAME SERVER_PORT\n"
+                "\tOPTION:\t A, enable active mode\n"
+                "\t\t 4", argv[0]);
         exit(EXIT_FAILURE);
     }
 
@@ -155,7 +164,7 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
     // if receive hello proceed with authenticate and operate if not warning
-    if(!recv_msg(sd, HELLO_CODE, NULL)) {
+    if(!strict_recv_msg(sd, HELLO_CODE, NULL)) {
         fprintf(stderr, "main: Hello message not received, quiting client...\n");
         exit(EXIT_FAILURE);
         close(sd);
@@ -191,12 +200,12 @@ int recv_msg(int sd, int code, char *text)
     // error checking
     if (recv_s == -1) {
         perror("recv");
-        fprintf(stderr, "recv_msg: Error during recv");
+        fprintf(stderr, "strict_recv_msg: Error during recv");
     }
 
     if (recv_s == 0) {
         close(sd);
-        fprintf(stderr, "recv_msg: Connection closed by host\n");
+        fprintf(stderr, "strict_recv_msg: Connection closed by host\n");
         exit(EXIT_FAILURE);
     }
 
@@ -206,7 +215,7 @@ int recv_msg(int sd, int code, char *text)
 
     // optional copy of parameters
     if(text) strcpy(text, message);
-    return code == recv_code;
+    return recv_code;
 }
 
 void send_msg(int sd, char *operation, char *param) 
@@ -248,7 +257,7 @@ int authenticate(int sd) {
     input = NULL;
 
     // wait to receive password requirement and check for errors
-    if(!recv_msg(sd, PASSWORD_REQUIRED_CODE, desc)) {
+    if(!strict_recv_msg(sd, PASSWORD_REQUIRED_CODE, desc)) {
         fprintf(stderr, "authenticate: Abnormal flow: %s\n", desc);
         return 0;
     }
@@ -264,7 +273,7 @@ int authenticate(int sd) {
     free(input);
 
     // wait for the answer, process it and check for errors
-    if(!recv_msg(sd, LOGGED_CODE, desc)) {
+    if(!strict_recv_msg(sd, LOGGED_CODE, desc)) {
         fprintf(stderr, "authenticate: Incorrect credentials: %s\n", desc);
         return 0;
     }
@@ -289,7 +298,7 @@ void get(char *file_name,struct conn_stats *stats) {
     send_msg(cmd_sd, "RETR", file_name);
     
     // check for the response
-    recv_msg(cmd_sd, 0, buffer);
+    strict_recv_msg(cmd_sd, 0, buffer);
 
     // parsing the write_file size from the answer received
     // sscanf(buffer, "File %*s size %d bytes", &f_size);
@@ -308,7 +317,7 @@ void get(char *file_name,struct conn_stats *stats) {
     fclose(read_file);
 
     // receive the OK from the server
-    if(!recv_msg(stats -> cmd_chnl, TRANSFER_COMPLETE_CODE, NULL)) {
+    if(!strict_recv_msg(stats -> cmd_chnl, TRANSFER_COMPLETE_CODE, NULL)) {
         fprintf(stderr, "get: Transfer complete code not received\n");
     }
 }
@@ -317,7 +326,7 @@ void quit(int sd) {
     // send command QUIT to the client
     send_msg(sd, "QUIT", NULL);
     // receive the answer from the server
-    if(!recv_msg(sd, GOODBYE_CODE, NULL)) {
+    if(!strict_recv_msg(sd, GOODBYE_CODE, NULL)) {
         fprintf(stderr, "quit: Couldn't close server connection properly\n");
         close(sd);
         exit(EXIT_FAILURE);
@@ -369,8 +378,11 @@ FILE *dataconn(struct conn_stats *stats, const char* mode)
     ip_from_sd(stats -> cmd_chnl, ip_addr);
 
     if(stats -> passivemode) {
+        send_msg(stats -> cmd_chnl, "EPSV", NULL);
+
+
         send_msg(stats -> cmd_chnl, "PASV", NULL);
-        if(!recv_msg(stats -> cmd_chnl, ENTERING_PASV_MODE_CODE, buff)) {
+        if(!strict_recv_msg(stats -> cmd_chnl, ENTERING_PASV_MODE_CODE, buff)) {
             fprintf(stderr, "dataconn: Abnormal flow\n");
             return 0;
         }
@@ -396,15 +408,16 @@ FILE *dataconn(struct conn_stats *stats, const char* mode)
     }
 
     port = atoi(port_str);
-
+                                                            
     sscanf(ip_addr, "%d.%d.%d.%d", &octal_0, &octal_1, &octal_2, &octal_3);
 
     sprintf(buff, "%d,%d,%d,%d,%d,%d", octal_0, octal_1, octal_2, octal_3, port / 256, port % 256);
 
+
     send_msg(stats -> cmd_chnl, "PORT", buff);
                                                             
-    if(!recv_msg(stats -> cmd_chnl, 200, NULL)) {
-        fprintf(stderr, "dataconn: 200 not received after PORT command");
+    if(!strict_recv_msg(stats -> cmd_chnl, OK_CODE, NULL)) {
+        fprintf(stderr, "dataconn: OK code not received after PORT command");
         return NULL;
     }
 
@@ -425,7 +438,7 @@ int tcp_connection (const char* name, const char* port)
 
     memset(&hints, 0, sizeof(hints));
 
-    hints.ai_family = AF_INET;
+    hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = 0;
     hints.ai_protocol = 0; // any protocol
@@ -465,7 +478,7 @@ int tcp_listen(char *port_str_dst)
 
     memset(&hints, 0, sizeof(hints));
 
-    hints.ai_family = AF_INET;
+    hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_PASSIVE;
     hints.ai_protocol = 0; // any protocol
@@ -548,7 +561,7 @@ void ls(struct conn_stats *stats)
 
     send_msg(stats -> cmd_chnl, "LIST", NULL);
 
-    recv_msg(stats -> cmd_chnl, 0, buffer);
+    strict_recv_msg(stats -> cmd_chnl, 0, buffer);
 
     while(!feof(data)) {
         fread(buffer, sizeof(char), BUFSIZE, data);
@@ -558,7 +571,7 @@ void ls(struct conn_stats *stats)
 
     fclose(data);
 
-    if(!recv_msg(stats -> cmd_chnl, TRANSFER_COMPLETE_CODE, NULL)) {
+    if(!strict_recv_msg(stats -> cmd_chnl, TRANSFER_COMPLETE_CODE, NULL)) {
         fprintf(stderr, "get: Transfer complete code not received\n");
     }
 
@@ -575,7 +588,7 @@ void store(char *filename, struct conn_stats *stats)
 
     send_msg(stats -> cmd_chnl, "STOR", filename);
 
-    recv_msg(stats -> cmd_chnl, 0, buffer);
+    strict_recv_msg(stats -> cmd_chnl, 0, buffer);
 
     while(!feof(send_file)) {
         fread(buffer, sizeof(char), BUFSIZE, send_file);
@@ -584,7 +597,7 @@ void store(char *filename, struct conn_stats *stats)
 
     fclose(data);
 
-    if(!recv_msg(stats -> cmd_chnl, TRANSFER_COMPLETE_CODE, NULL)) {
+    if(!strict_recv_msg(stats -> cmd_chnl, TRANSFER_COMPLETE_CODE, NULL)) {
         fprintf(stderr, "get: Transfer complete code not received\n");
     }
 }
