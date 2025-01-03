@@ -358,9 +358,10 @@ FILE *dataconn(struct conn_stats *stats, const char* mode)
 {
     char buff[BUFSIZE] = {'\0'},
          ip_addr[INET6_ADDRSTRLEN] = {'\0'},
-         port[PORTLEN] = {'\0'};
+         port_str[PORTLEN] = {'\0'};
     int data_sd, server_sd;
     int octal_0, octal_1, octal_2, octal_3;
+    int port;
     struct sockaddr peer_addr;
     socklen_t peer_addrlen = sizeof(peer_addr);
 
@@ -375,9 +376,9 @@ FILE *dataconn(struct conn_stats *stats, const char* mode)
         }
 
         // error checking
-        parse_pasvres(buff, port);
+        parse_pasvres(buff, port_str);
 
-        data_sd = tcp_connection(ip_addr, port);
+        data_sd = tcp_connection(ip_addr, port_str);
 
         if(!data_sd) {
             fprintf(stderr, "dataconn: couldn't setup data connection\n");
@@ -387,21 +388,27 @@ FILE *dataconn(struct conn_stats *stats, const char* mode)
         return fdopen(data_sd, mode);
     }
     
-    sscanf(ip_addr, "%d.%d.%d.%d", &octal_0, &octal_1, &octal_2, &octal_3);
-    sprintf(buff, "%d,%d,%d,%d", octal_0, octal_1, octal_2, octal_3);
-
-    send_msg(stats -> cmd_chnl, "PORT", buff);
-
-    recv_msg(stats -> cmd_chnl, 0, NULL); // consumes either 125 or 150, we can check if the command is 550 or 530
-    
-    data_sd = tcp_listen(port);
+    data_sd = tcp_listen(port_str);
 
     if(!data_sd) {
         fprintf(stderr, "dataconn: couldn't listen to tcp socket");
         return NULL;
     }
 
-    server_sd = accept(data_sd, &peer_addr, &peer_addrlen); // waits for server connection
+    port = atoi(port_str);
+
+    sscanf(ip_addr, "%d.%d.%d.%d", &octal_0, &octal_1, &octal_2, &octal_3);
+
+    sprintf(buff, "%d,%d,%d,%d,%d,%d", octal_0, octal_1, octal_2, octal_3, port / 256, port % 256);
+
+    send_msg(stats -> cmd_chnl, "PORT", buff);
+                                                            
+    if(!recv_msg(stats -> cmd_chnl, 200, NULL)) {
+        fprintf(stderr, "dataconn: 200 not received after PORT command");
+        return NULL;
+    }
+
+    server_sd = accept(data_sd, &peer_addr, &peer_addrlen); // blocks while waiting for server connection
 
     return fdopen(server_sd, mode);
 }
@@ -508,7 +515,9 @@ int tcp_listen(char *port_str_dst)
         return 0;
     }
 
-    strncpy(port_str_dst, port_str, PORTLEN);
+    if(port_str_dst) {
+        strncpy(port_str_dst, port_str, PORTLEN);
+    }
 
     return sd;
 
