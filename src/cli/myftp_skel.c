@@ -1,149 +1,5 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/wait.h>
-#include <netdb.h>
-#include <string.h>
-#include <unistd.h>
-#include <err.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
+#include "myftp_skel.h"
 
-// Constants
-#define DOMAINLEN 256
-#define BUFSIZE 512
-#define PORTLEN 6 // "65536" + '\0'
-#define FTP_PORT_STR "21"
-                    
-// Codes
-#define HELLO_CODE 220
-#define DIRECTORY_CHANGED_OK_CODE 250
-#define FILE_ACTION_OK_CODE 220
-#define GOODBYE_CODE 220
-#define WRONG_LOGIN_CODE 550
-#define LOGGED_CODE 230
-#define PASSWORD_REQUIRED_CODE 331
-#define TRANSFER_COMPLETE_CODE 226
-#define ENTERING_PASV_MODE_CODE 227
-#define OPENING_BINARY_CONN_CODE 150
-#define OK_CODE 200
-
-// Messages
-#define MSG_220 "220 srvFtp version 1.0\r\n"
-#define MSG_331 "331 Password required for %s\r\n"
-#define MSG_230 "230 User %s logged in\r\n"
-#define MSG_530 "530 Login incorrect\r\n"
-#define MSG_221 "221 Goodbye\r\n"
-#define MSG_550 "550 %s: no such file or directory\r\n"
-#define MSG_299 "299 File %s size %ld bytes\r\n"
-#define MSG_226 "226 Transfer complete\r\n"
-
-#define PROMPT "ftp> "
-
-
-// Structured passed by function calls
-struct conn_stats {
-    int cmd_chnl;
-    int passivemode;
-    int verbose;
-};
-
-void cd(char *dirname, struct conn_stats *stats);
-
-/* Parses the pasv answer and calculates the port. 
- * The network address is not processed since it is always the server address.
- *
- * src: input string with the whole answer
- * dst: port obtained*/
-void parse_pasvres (char *src, char *dst);
-
-/**
- * function: receive and analize the answer from the server
- * sd: socket descriptor
- * code: three digit code to check if received
- * text: normally NULL. If a pointer is received as parameter
- *       then it is setted as the optional part of the message.
- * return: code received in the message
- **/
-int recv_msg(int sd, char *text);
-
-/**
- * similar to strict_recv_msg, but loose. 
- * Just compares the first digit of both codes.
- */
-int loose_recv_msg(int sd, int code, char *text);
-
-/**
- * function: send command formated to the server
- * sd: socket descriptor
- * operation: four letters command
- * param: command parameters
- **/
-void send_msg(int sd, char *operation, char *param);
-
-/**
- * function: simple input from keyboard
- * return: input without \n character
- **/
-char *read_input();
-
-/**
- * function: login process from the client side
- * sd: socket descriptor
- **/
-int authenticate(int sd);
-/**
- * function: operation get
- * sd: socket descriptor
- * file_name: file name to get from the server
- **/
-void get(char *file_name, struct conn_stats *stats);
-
-/**
- * function: operation quit
- * sd: socket descriptor
- **/
-void quit(int sd);
-
-/**
- * function: make all operations (get|quit)
- * sd: socket descriptor
- **/
-void operate(struct conn_stats*);
-
-void ls(struct conn_stats*);
-
-/* creates an active tcp socket.
- * stats: domain name of the service
- * port: service port
- * returns: socket file descriptor to the service */
-int tcp_connection(const char* name, const char* port);
-
-/* creates a passive tcp socket
- * name: domain name
- * port_str: 
- * returns: socket file descriptor of the created service */
-int tcp_listen(char *port_str);
-
-/* Setups passive or active data connection.
- * The opened file must be handled properly afterwards.
- * returns: data connection file descriptor, 0 if couldn't set connection*/
-FILE *dataconn(struct conn_stats*, const char* mode);
-
-void store(char *filename, struct conn_stats *stats);
-
-/* obtains ip address from the sockaddr structure.
- *
- * sd: socket descriptor
- * dst: destiny string, should have a length of at least INET6_ADDRSTRLEN
- */
-void ip_from_sd(int sd, char *dst);
-
-/**
- * Run with
- *         ./myftp <SERVER_NAME> <SERVER_PORT>
- **/
 int main(int argc, char *argv[]) 
 {
     int sd;
@@ -152,9 +8,11 @@ int main(int argc, char *argv[])
 
     // arguments checking
     if(argc <= 2) {
-        fprintf(stderr, "Usage: %s [-OPTIONS]... SERVER_NAME SERVER_PORT\n"
-                "\tOPTION:\t A, enable active mode\n"
-                "\t\t v, enable verbose mode\n", argv[0]);
+        fprintf(stderr, "Usage: %s -[OPTIONS]... SERVER_NAME SERVER_PORT\n"
+                "\t OPTIONS:\n" 
+                "\t\t -A, enable active mode\n"
+                "\t\t -v, enable verbose mode\n"
+                "\n\t example: %s -Av localhost 21 \n", argv[0], argv[0]);
         exit(EXIT_FAILURE);
     }
 
@@ -181,6 +39,7 @@ int main(int argc, char *argv[])
 
     stats.passivemode = 1;
     stats.cmd_chnl = sd;
+    stats.verbose = 0;
 
     while((c = getopt(argc, argv, "A:v")) != -1) {
         switch (c) {
@@ -257,11 +116,12 @@ char *read_input() {
     return NULL;
 }
 
-int authenticate(int sd) {
+int authenticate(int sd) 
+{
     char *input = NULL, desc[100];
 
     if(!sd) {
-        fprintf(stderr, "authenticate: sd not available\n");
+        fprintf(stderr, "authenticate: invalid argument (sd)\n");
         exit(EXIT_FAILURE);
     }
 
@@ -301,7 +161,8 @@ int authenticate(int sd) {
 }
 
 
-void get(char *file_name, struct conn_stats *stats) {
+void get(char *file_name, struct conn_stats *stats) 
+{
     char buffer[BUFSIZE];
     char c;
     int cmd_sd, code_received;
@@ -355,7 +216,8 @@ void get(char *file_name, struct conn_stats *stats) {
     }
 }
 
-void quit(int sd) {
+void quit(int sd) 
+{
     // send command QUIT to the client
     send_msg(sd, "QUIT", NULL);
     // receive the answer from the server
@@ -366,7 +228,8 @@ void quit(int sd) {
     exit(EXIT_SUCCESS);
 }
 
-void operate(struct conn_stats *stats) {
+void operate(struct conn_stats *stats) 
+{
     char *input, *op, *param;
 
     if(!stats) {
@@ -584,7 +447,6 @@ int tcp_listen(char *port_str_dst)
 
 }
 
-// reference: "Entering Passive Mode (x,x,x,x,y,y)"
 void parse_pasvres(char *src, char *dst) 
 {
     char buf[PORTLEN];
