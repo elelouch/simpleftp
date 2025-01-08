@@ -97,6 +97,7 @@ int recv_cmd(int sd, char *operation, char *param);
  * sd: socket descriptor
  * file_path: name of the RETR file
  **/
+
 void retr(int sd, char *file_path);
 /**
  * funcion: check valid credentials in ftpusers file

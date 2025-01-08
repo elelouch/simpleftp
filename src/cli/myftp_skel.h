@@ -44,7 +44,7 @@
 
 /* Structure passed through function calls.
  * Why not using a global state? It is messy, every function can potentially change it.
- * Plus, is difficult to remember whether a variable belongs to the global scope or local 
+ * Plus, it is difficult to remember whether a variable belongs to the global scope or local 
  * scope during the function definition.
  * This helps tracking changes.
  */
@@ -55,7 +55,8 @@ struct conn_stats {
 };
 
 /* Sends CWD to the server.
- * dirname: 
+ * dirname: directory to change
+ * stats: state passed through function calls
  */
 void cd (char *dirname, struct conn_stats *stats);
 
@@ -75,7 +76,7 @@ void parse_pasvres (char *src, char *dst);
  * return: code received in the message. The design was changed since checking for general codes
  * that starts with certain numbers (like 2xx) gives more flexibility.
  **/
-int recv_msg(int sd, char *text);
+int recv_msg(struct conn_stats *stats, char *text);
 
 /**
  * function: send formmated command to the server
@@ -95,7 +96,7 @@ char *read_input();
  * function: login process from the client side
  * sd: socket descriptor
  **/
-int authenticate(int sd);
+int authenticate(struct conn_stats *stats);
 
 /**
  * function: operation get
@@ -108,7 +109,7 @@ void get(char *file_name, struct conn_stats *stats);
  * function: operation quit
  * sd: socket descriptor
  **/
-void quit(int sd);
+void quit(struct conn_stats *params);
 
 /**
  * function: make all operations (get|quit)
@@ -153,3 +154,8 @@ void store(char *filename, struct conn_stats *stats);
  */
 
 void ip_from_sd(int sd, char *dst);
+
+/* sends PWD to server and receives msg
+ * stats: connection status
+ */
+void pwd(struct conn_stats* stats);

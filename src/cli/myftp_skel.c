@@ -25,17 +25,6 @@ int main(int argc, char *argv[])
         fprintf(stderr, "main: Couldn't connect to server, name or port might be wrong\n");
         exit(EXIT_FAILURE);
     }
-    // if receive hello proceed with authenticate and operate if not warning
-    if(recv_msg(sd, NULL) != HELLO_CODE) {
-        fprintf(stderr, "main: Hello message not received, quiting client...\n");
-        exit(EXIT_FAILURE);
-        close(sd);
-    }
-
-    if(!authenticate(sd)) {
-        exit(EXIT_FAILURE);
-        close(sd);
-    }
 
     stats.passivemode = 1;
     stats.cmd_chnl = sd;
@@ -52,6 +41,19 @@ int main(int argc, char *argv[])
         }
     }
 
+    // if receive hello proceed with authenticate and operate if not warning
+    if(recv_msg(&stats, NULL) != HELLO_CODE) {
+        fprintf(stderr, "main: Hello message not received, quiting client...\n");
+        close(sd);
+        exit(EXIT_FAILURE);
+    }
+
+    if(!authenticate(&stats)) {
+        close(sd);
+        exit(EXIT_FAILURE);
+    }
+
+
     operate(&stats);
 
     // close socket
@@ -60,13 +62,13 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-int recv_msg(int sd, char *text) 
+int recv_msg(struct conn_stats *stats, char *text) 
 {
     char buffer[BUFSIZE], message[BUFSIZE];
     int recv_s, recv_code;
 
     // receive the answer
-    recv_s = recv(sd, buffer, BUFSIZE, 0);
+    recv_s = recv(stats -> cmd_chnl, buffer, BUFSIZE, 0);
     // error checking
     if (recv_s == -1) {
         perror("recv");
@@ -74,14 +76,18 @@ int recv_msg(int sd, char *text)
     }
 
     if (recv_s == 0) {
-        close(sd);
+        close(stats -> cmd_chnl);
+        stats -> cmd_chnl = 0;
         fprintf(stderr, "recv_msg: Connection closed by host\n");
         exit(EXIT_FAILURE);
     }
 
     // parsing the code and message receive from the answer
     sscanf(buffer, "%d %[^\r\n]\r\n", &recv_code, message);
-    printf("%d %s\n", recv_code, message);
+
+    if(stats -> verbose) {
+        printf("%d %s\n", recv_code, message);
+    }
 
     // optional copy of parameters
     if(recv_code / 100 == 5) {
@@ -116,11 +122,11 @@ char *read_input() {
     return NULL;
 }
 
-int authenticate(int sd) 
+int authenticate(struct conn_stats *stats) 
 {
     char *input = NULL, desc[100];
 
-    if(!sd) {
+    if(!stats -> cmd_chnl) {
         fprintf(stderr, "authenticate: invalid argument (sd)\n");
         exit(EXIT_FAILURE);
     }
@@ -130,13 +136,13 @@ int authenticate(int sd)
     input = read_input();
 
     // send the command to the server
-    send_msg(sd, "USER", input);
+    send_msg(stats -> cmd_chnl, "USER", input);
     // release memory
     free(input);
     input = NULL;
 
     // wait to receive password requirement and check for errors
-    if(recv_msg(sd, desc) != PASSWORD_REQUIRED_CODE) {
+    if(recv_msg(stats, desc) != PASSWORD_REQUIRED_CODE) {
         fprintf(stderr, "authenticate: Abnormal flow: %s\n", desc);
         return 0;
     }
@@ -146,13 +152,13 @@ int authenticate(int sd)
     input = read_input();
 
     // send the command to the server
-    send_msg(sd, "PASS", input);
+    send_msg(stats -> cmd_chnl, "PASS", input);
 
     // release memory
     free(input);
 
     // wait for the answer, process it and check for errors
-    if(recv_msg(sd, desc) != LOGGED_CODE) {
+    if(recv_msg(stats, desc) != LOGGED_CODE) {
         fprintf(stderr, "authenticate: Incorrect credentials: %s\n", desc);
         return 0;
     }
@@ -188,7 +194,7 @@ void get(char *file_name, struct conn_stats *stats)
     send_msg(cmd_sd, "RETR", file_name);
     
     // check for the response
-    code_received = recv_msg(cmd_sd, buffer);
+    code_received = recv_msg(stats, buffer);
 
     if(code_received / 100 != 1) {
         fprintf(stderr, "get: Action initialized code (1xx) not received\n");
@@ -211,20 +217,20 @@ void get(char *file_name, struct conn_stats *stats)
     fclose(read_file);
 
     // receive the OK from the server
-    if(recv_msg(stats -> cmd_chnl, NULL) != TRANSFER_COMPLETE_CODE) {
+    if(recv_msg(stats, NULL) != TRANSFER_COMPLETE_CODE) {
         fprintf(stderr, "get: Transfer complete code not received\n");
     }
 }
 
-void quit(int sd) 
+void quit(struct conn_stats *stats) 
 {
-    // send command QUIT to the client
-    send_msg(sd, "QUIT", NULL);
-    // receive the answer from the server
-    if(recv_msg(sd, NULL) != GOODBYE_CODE) {
+    send_msg(stats -> cmd_chnl, "QUIT", NULL);
+
+    if(recv_msg(stats, NULL) != GOODBYE_CODE)
         fprintf(stderr, "quit: server didn't send 221 code\n");
-    }
-    close(sd);
+
+    close(stats -> cmd_chnl);
+    stats -> cmd_chnl = 0;
     exit(EXIT_SUCCESS);
 }
 
@@ -248,7 +254,7 @@ void operate(struct conn_stats *stats)
         if (strcmp(op, "get") == 0) {
             get(param, stats);
         } else if (strcmp(op, "quit") == 0) {
-            quit(stats -> cmd_chnl);
+            quit(stats);
             break;
         } else if (strcmp(op, "ls") == 0) {
             ls(stats);
@@ -256,6 +262,8 @@ void operate(struct conn_stats *stats)
             store(param, stats);
         } else if (strcmp(op, "cd") == 0) {
             cd(param, stats);
+        } else if (strcmp(op, "pwd") == 0) {
+            pwd(stats);
         } else {
             // new operations in the future
             printf("TODO: unexpected command\n");
@@ -292,7 +300,7 @@ FILE *dataconn(struct conn_stats *stats, const char* mode)
     if(stats -> passivemode) {
         send_msg(stats -> cmd_chnl, "PASV", NULL);
 
-        if (recv_msg(stats -> cmd_chnl, buff) != ENTERING_PASV_MODE_CODE) {
+        if (recv_msg(stats, buff) != ENTERING_PASV_MODE_CODE) {
             fprintf(stderr, "dataconn: Abnormal flow\n");
             return 0;
         }
@@ -326,7 +334,7 @@ FILE *dataconn(struct conn_stats *stats, const char* mode)
 
     send_msg(stats -> cmd_chnl, "PORT", buff);
                                                             
-    code_received = recv_msg(stats -> cmd_chnl, NULL); 
+    code_received = recv_msg(stats, NULL); 
 
     if(code_received / 100 != 2) {
         fprintf(stderr, "dataconn: OK code not received after PORT command");
@@ -345,8 +353,6 @@ int tcp_connection (const char* name, const char* port)
     int addrstate = 0, sd = 0;
 
     if(!name || !port) return 0;
-
-    printf("name used: %s, port used: %s\n", name, port);
 
     memset(&hints, 0, sizeof(hints));
 
@@ -482,7 +488,7 @@ void ls (struct conn_stats *stats)
 
     send_msg(stats -> cmd_chnl, "LIST", NULL);
 
-    if(recv_msg(stats -> cmd_chnl, buffer) / 100 != 1) {
+    if(recv_msg(stats, buffer) / 100 != 1) {
         fprintf(stderr, "file action code not received\n");
     }
 
@@ -493,7 +499,7 @@ void ls (struct conn_stats *stats)
 
     fclose(data);
 
-    if(recv_msg(stats -> cmd_chnl, NULL) != TRANSFER_COMPLETE_CODE) {
+    if(recv_msg(stats, NULL) != TRANSFER_COMPLETE_CODE) {
         fprintf(stderr, "get: Transfer complete code not received\n");
     }
 
@@ -515,7 +521,8 @@ void cd(char *dirname, struct conn_stats *stats)
 
     send_msg(stats -> cmd_chnl, "CWD", dirname);
 
-    code_received = recv_msg(stats -> cmd_chnl, NULL);
+    code_received = recv_msg(stats, NULL);
+
     if (code_received != DIRECTORY_CHANGED_OK_CODE) {
         fprintf(stderr, "directory was not changed correctly, ok code not received\n");
     }
@@ -543,7 +550,7 @@ void store(char *filename, struct conn_stats *stats)
 
     send_msg(stats -> cmd_chnl, "STOR", filename);
 
-    recv_msg(stats -> cmd_chnl, buffer);
+    recv_msg(stats, buffer);
 
     while(!feof(send_file)) {
         bytes_read = fread(buffer, sizeof(char), BUFSIZE, send_file);
@@ -552,7 +559,7 @@ void store(char *filename, struct conn_stats *stats)
 
     fclose(data);
 
-    if(recv_msg(stats -> cmd_chnl, NULL) != TRANSFER_COMPLETE_CODE) {
+    if(recv_msg(stats, NULL) != TRANSFER_COMPLETE_CODE) {
         fprintf(stderr, "get: transfer complete code not received\n");
     }
 }
@@ -580,4 +587,24 @@ void ip_from_sd(int sd, char *dst)
     } else {
         inet_ntop(af, &((struct sockaddr_in6*) &addr) -> sin6_addr, dst, INET6_ADDRSTRLEN);
     }
+}
+
+void pwd(struct conn_stats *stats) 
+{
+    char buffer[BUFSIZE] = {'\0'};
+    int code_received = 0;
+
+    if (!stats || !stats -> cmd_chnl) {
+        fprintf(stderr, "ls: invalid argument (stats)\n");
+        exit(EXIT_FAILURE);
+    }
+    send_msg(stats -> cmd_chnl, "PWD", NULL);
+
+    code_received = recv_msg(stats, buffer);
+
+    if(!code_received) {
+        fprintf(stderr, "test\n");
+    }
+
+    printf("%s\n", buffer);
 }
