@@ -52,12 +52,6 @@ int send_pasv_ans(int cmd_chnl_sd, int file_chnl_sd);
  */
 int send_epsv_ans(int cmd_chnl_sd, int file_chnl_sd); 
 
-/* Opens a socket for a tcp server. Executes the binding and frees the addrinfo struct.
- * If service is null, then the OS chooses the port.
- * return: server socket descriptor
- */
-int opensock_tcpsrv(char *address, char *service);
-
 /* Client asks to the server to listen to certain port*/
 int pasv(int sd);
 
@@ -263,7 +257,7 @@ void retr(int sd, char *file_path)
     sleep(1);
 
     // send the file
-    while ((bread = fread(buffer, BUFSIZE, 1, file))) 
+    while ((bread = fread(buffer, sizeof(char), BUFSIZE, file))) 
         send(sd, buffer, bread, 0);
 
     if (ferror(file))
@@ -416,9 +410,6 @@ int opensock_tcpsrv(char *address, char *service)
 
     freeaddrinfo(p);
 
-    if(inet_ntop(rp->ai_family, rp->ai_addr, ip_addr, INET6_ADDRSTRLEN)) {
-        perror("inet_ntop");
-    }
     // and return socket
     return sd;
 }

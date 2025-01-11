@@ -122,19 +122,6 @@ void operate(struct conn_stats*);
  */
 void ls(struct conn_stats*);
 
-/* creates an active tcp socket.
- * stats: domain name of the service
- * port: service port
- * returns: socket file descriptor to the service */
-int tcp_connection(const char* name, const char* port);
-
-/* Creates a passive tcp socket.
- * name: domain name
- * port_str: 
- * returns: socket file descriptor of the created service 
- */
-int tcp_listen(char *port_str);
-
 /* Setups passive or active data connection.
  * The opened file must be handled properly afterwards.
  * returns: data connection file descriptor, 0 if couldn't set connection
@@ -147,13 +134,6 @@ FILE *dataconn(struct conn_stats*, const char* mode);
  * stats: state of the program
  */
 void store(char *filename, struct conn_stats *stats);
-
-/* obtains ip address from the socket file descriptor
- * sd: socket descriptor
- * dst: destiny buffer, should have a length of at least INET6_ADDRSTRLEN
- */
-
-void ip_from_sd(int sd, char *dst);
 
 /* sends PWD to server and receives msg
  * stats: connection status
