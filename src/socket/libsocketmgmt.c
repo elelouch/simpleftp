@@ -1,4 +1,4 @@
-#include "libsocketmgmt.h"
+#include "socketmgmt.h"
 #include <sys/socket.h>
 #include <netdb.h>
 #include <stdlib.h>
@@ -9,12 +9,11 @@
 
 #define PORTLEN 6
 
-int tcp_listen(char *port_str_dst) 
+int tcp_listen(char *port, int queue_size) 
 {
     struct addrinfo hints;
     struct addrinfo *results = NULL, *rp = NULL;
-    int addrstate = 0, sd = 0, portmax = 1 << 16;
-    char port_str[PORTLEN];
+    int addrstate = 0, sd = 0;
 
     memset(&hints, 0, sizeof(hints));
 
@@ -26,13 +25,7 @@ int tcp_listen(char *port_str_dst)
     hints.ai_next = NULL;
     hints.ai_canonname = NULL;
 
-    for(int i = 1025; i < portmax; i++) {
-        sprintf(port_str, "%d", i);
-
-        if((addrstate = getaddrinfo(NULL, port_str, &hints, &results)) == 0){
-            break;
-        } 
-    }
+    addrstate = getaddrinfo(NULL, port, &hints, &results);
 
     if (addrstate != 0) {
         fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(addrstate));
@@ -62,13 +55,12 @@ int tcp_listen(char *port_str_dst)
         return 0;
     }
 
-    if(listen(sd, 1) == -1) {
+    if(listen(sd, queue_size) == -1) {
         perror("tcp_listen");
         close(sd);
         return 0;
     }
 
-    if(port_str_dst) strncpy(port_str_dst, port_str, PORTLEN);
 
     return sd;
 

@@ -1,5 +1,5 @@
 #include "myftp_skel.h"
-#include "socket/libsocketmgmt.h"
+#include "socketmgmt.h"
 
 int main(int argc, char *argv[]) 
 {
@@ -92,7 +92,7 @@ int recv_msg(struct conn_stats *stats, char *text)
 
     // optional copy of parameters
     if(recv_code / 100 == 5) {
-        fprintf(stderr, "Command not recognized by server\n");
+        fprintf(stderr, "Command not recognized by server. Received: %d\n", recv_code);
     }
     if(text) strcpy(text, message);
     return recv_code;
@@ -191,6 +191,10 @@ void get(char *file_name, struct conn_stats *stats)
     // setups data channel
     read_file = dataconn(stats, "r");
 
+    if(!read_file) {
+        fprintf(stderr, "can't connect data channel\n");
+        return;
+    }
     // send the RETR command to the server
     send_msg(cmd_sd, "RETR", file_name);
     
@@ -318,14 +322,14 @@ FILE *dataconn(struct conn_stats *stats, const char* mode)
         return fdopen(data_sd, mode);
     }
     
-    data_sd = tcp_listen(port_str);
+    data_sd = tcp_listen(FTP_DATA_PORT_STR, 1);
 
     if(!data_sd) {
-        fprintf(stderr, "dataconn: couldn't listen to tcp socket");
+        fprintf(stderr, "dataconn: couldn't listen to tcp socket\n");
         return NULL;
     }
 
-    port = atoi(port_str);
+    port = atoi(FTP_DATA_PORT_STR);
                                                             
     // takes each byte of the address
     sscanf(ip_addr, "%d.%d.%d.%d", &octal_0, &octal_1, &octal_2, &octal_3);
@@ -338,7 +342,7 @@ FILE *dataconn(struct conn_stats *stats, const char* mode)
     code_received = recv_msg(stats, NULL); 
 
     if(code_received / 100 != 2) {
-        fprintf(stderr, "dataconn: OK code not received after PORT command");
+        fprintf(stderr, "dataconn: OK code not received after PORT command\n");
         return NULL;
     }
 
@@ -379,6 +383,11 @@ void ls (struct conn_stats *stats)
     }
 
     data = dataconn(stats, "r");
+
+    if(!data) {
+        fprintf(stderr, "can't connect data channel\n");
+        return;
+    }
 
     send_msg(stats -> cmd_chnl, "LIST", NULL);
 
@@ -440,6 +449,11 @@ void store(char *filename, struct conn_stats *stats)
 
     data = dataconn(stats, "w");
 
+    if(!data) {
+        fprintf(stderr, "can't connect data channel\n");
+        return;
+    }
+
     send_file = fopen(filename, "r");
 
     send_msg(stats -> cmd_chnl, "STOR", filename);
@@ -457,8 +471,6 @@ void store(char *filename, struct conn_stats *stats)
         fprintf(stderr, "get: transfer complete code not received\n");
     }
 }
-
-
 
 void pwd(struct conn_stats *stats) 
 {

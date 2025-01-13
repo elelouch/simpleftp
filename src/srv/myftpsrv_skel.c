@@ -1,120 +1,6 @@
-#include <linux/limits.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <stdarg.h>
-#include <unistd.h>
-#include <netdb.h>
-#include <err.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <fcntl.h>
-#include <limits.h>
+#include "myftpsrv_skel.h"
+#include "socketmgmt.h"
 
-#include <netinet/in.h>
-#include <arpa/inet.h>
-
-#define BUFSIZE 512
-#define CMDSIZE 4
-#define PARSIZE 100
-#define BACKLOG_SIZE 10
-#define PORT_MAX_LEN 5 + 1 // (2^16 = 65536, 5 caracteres maximo) + '\0'
-
-#define MSG_125 "125 Data connection open, starting transfer\r\n"
-#define MSG_211 "211 - RETR <path>: retrieve a file\r\n"
-#define MSG_215 "215 UNIX Type\r\n"
-#define MSG_220 "220 srvFtp version 1.0\r\n"
-#define MSG_230 "230 User %s logged in\r\n"
-#define MSG_221 "221 Goodbye\r\n"
-#define MSG_226 "226 Transfer complete\r\n"
-#define MSG_227 "227 Entering Passive Mode (%d,%d,%d,%d,%d,%d)\r\n"
-#define MSG_229 "229 Entering Extended Passive Mode (|||%s|)\r\n"
-#define MSG_257 "257 \"%s\" is the current directory\r\n"
-#define MSG_299 "299 File %s size %ld bytes\r\n"
-#define MSG_331 "331 Password required for %s\r\n"
-#define MSG_501 "501 Syntax errors in parameters or arguments\r\n"
-#define MSG_502 "502 Command not implemented\r\n"
-#define MSG_530 "530 Login incorrect\r\n"
-#define MSG_550 "550 %s: no such file or directory\r\n"
-
-/* executes retr concurrently using sd as file destination
- */
-void retr_wrapper(int sd, char* param);
-/* builds the pasv response using the opened sd
- * return: -1 on error
- *          0 on success
- */
-int send_pasv_ans(int cmd_chnl_sd, int file_chnl_sd); 
-/* builds the espv response using the opened sd
- * return: -1 on error
- *          0 on success
- */
-int send_epsv_ans(int cmd_chnl_sd, int file_chnl_sd); 
-
-/* Client asks to the server to listen to certain port*/
-int pasv(int sd);
-
-int epsv(int sd);
-/* handles peer connection in the main loop
- * ssd: slave socket descriptor
- *  msd: master socket descriptor
- *  return 
- */
-void handle_connection(int, int);
-/**
- * function: send answer to the client
- * sd: file descriptor
- * message: formatting string in printf format
- * ...: variable arguments for economics of formats
- * return: true if not problem arise or else
- * notes: the MSG_x have preformated for these use
- **/
-int send_ans(int sd, char *message, ...);
-
-/**
- * function: receive the commands from the client
- * sd: socket descriptor
- * operation: \0 if you want to know the operation received
- *            OP if you want to check an especific operation
- *            ex: recv_cmd(sd, "USER", param)
- * param: parameters for the operation involve
- * return: only usefull if you want to check an operation
- *         ex: for login you need the seq USER PASS
- *             you can check if you receive first USER
- *             and then check if you receive PASS
- **/
-
-int recv_cmd(int sd, char *operation, char *param);
-/**
- * function: RETR operation
- * sd: socket descriptor
- * file_path: name of the RETR file
- **/
-
-void retr(int sd, char *file_path);
-/**
- * funcion: check valid credentials in ftpusers file
- * user: login user name
- * pass: user password
- * return: true if found or false if no
- **/
-int check_credentials(char *user, char *pass);
-/**
- * function: login process management
- * sd: socket descriptor
- * return: true if login is succesfully, false if not
- **/
-int authenticate(int sd);
-/**
- *  function: execute all commands (RETR|QUIT)
- *  sd: socket descriptor
- **/
-void operate(int sd);
-/**
- * Run with
- *         ./mysrv <SERVER_PORT>
- **/
 int main(int argc, char *argv[])
 {
     // reserve sockets and variables space
@@ -124,20 +10,17 @@ int main(int argc, char *argv[])
 
     // arguments checking
     if (argc != 2) {
-        fprintf(stderr, "Usage: %s <port>\n", argv[0]);
+        fprintf(stderr, "Usage: %s LISTEN_PORT\n", argv[0]);
         exit(EXIT_FAILURE);
     }
 
-    sd = opensock_tcpsrv(NULL, "3490");
+    sd = tcp_listen(argv[1], BACKLOG_SIZE);
 
-    if (listen(sd, BACKLOG_SIZE) == -1) {
-        perror("listen");
-        exit(EXIT_FAILURE);
-    }
+    if(!sd) exit(EXIT_FAILURE);
 
     while (1) {
         peer_sd = accept(sd, (struct sockaddr *)&peer_addr, &peer_len);
-        handle_connection(peer_sd, sd);
+        handle_connection(peer_sd);
     }
 
     close(sd);
@@ -145,15 +28,14 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-void handle_connection(int ssd, int msd)
+void handle_connection(int ssd)
 {
-    if (ssd == -1) {
-        perror("handle_connection:socket");
+    if (ssd == -1 || !ssd) {
+        fprintf(stderr, "slave socked descriptor not valid\n");
         return;
     }
 
     if (!fork()) {
-        close(msd); // close parent
         send_ans(ssd, MSG_220);
         if (!authenticate(ssd)) {
             close(ssd);
@@ -203,23 +85,20 @@ int recv_cmd(int sd, char *operation, char *param)
         exit(EXIT_FAILURE);
     }
 
-    printf("-------Client Request-----\n%s\n", buffer);
     // expunge the terminator characters from the buffer
     buffer[strcspn(buffer, "\r\n")] = 0;
 
     // complex parsing of the buffer
     // extract command received in operation if not set \0
     // extract parameters of the operation in param if it needed
-    printf("Details:\n\n");
     token = strtok(buffer, " ");
     if (token == NULL || strlen(token) < 4){
         warn("not valid ftp command");
         return 0;
     }
-    printf("* Command: %s\n", token);
 
-    if (operation[0] == '\0')
-        strcpy(operation, token);
+    if (operation[0] == '\0') strcpy(operation, token);
+
     if (strcmp(operation, token)){
         warn("Abnormal client flow: did not send %s command", operation);
         return 0;
@@ -229,21 +108,25 @@ int recv_cmd(int sd, char *operation, char *param)
 
     if (token != NULL)
         strcpy(param, token);
-    printf("* Arg: %s\n", param);
     return 1;
 }
 
-void retr(int sd, char *file_path)
+void retr(int cmd_chnl, FILE *data_chnl, char *file_path)
 {
     FILE *file;
     int bread;
     long fsize;
     char buffer[BUFSIZE];
 
+    if(!cmd_chnl || !data_chnl) {
+        fprintf(stderr, "retr:Invalid arguments\n");
+        return;
+    }
+
     // check if file exists if not inform error to client
     file = fopen(file_path, "r");
     if (!file) {
-        send_ans(sd, MSG_550); // TODO: suggest to use LIST command
+        send_ans(cmd_chnl, MSG_550); // TODO: suggest to use LIST command
         return;
     }
 
@@ -251,19 +134,19 @@ void retr(int sd, char *file_path)
     fseek(file, 0L, SEEK_END);
     fsize = ftell(file);
     fseek(file, 0L, SEEK_SET);
-    send_ans(sd, MSG_299, file_path, fsize);
+    send_ans(cmd_chnl, MSG_299, file_path, fsize);
 
     // important delay to avoid problems with buffer size
     sleep(1);
 
     // send the file
     while ((bread = fread(buffer, sizeof(char), BUFSIZE, file))) 
-        send(sd, buffer, bread, 0);
+        fwrite(buffer, sizeof(char), bread, data_chnl);
 
     if (ferror(file))
-        send_ans(sd, "Error while reading %s", file_path);
+        send_ans(cmd_chnl, "Error while reading %s", file_path);
     else
-        send_ans(sd, MSG_226);
+        send_ans(cmd_chnl, MSG_226);
 
     // close the file
     fclose(file);
@@ -325,7 +208,7 @@ int authenticate(int sd)
 void operate(int sd)
 {
     char op[CMDSIZE], param[PARSIZE];
-    int data_chnl = 0;
+    FILE *data_chnl = NULL;
 
     while (1) {
         op[0] = param[0] = '\0';
@@ -334,7 +217,7 @@ void operate(int sd)
             return;
 
         if (strcmp(op, "RETR") == 0 && data_chnl) {
-            retr_wrapper(data_chnl, param);
+            retr(sd, data_chnl, param);
         } else if (strcmp(op, "QUIT") == 0) {
             send_ans(sd, MSG_221);
             close(sd);
@@ -344,96 +227,15 @@ void operate(int sd)
         } else if (strcmp(op, "FEAT") == 0) {
             send_ans(sd, MSG_211);
         } else if (strcmp(op, "PASV") == 0)  { // server listens for a connection on a certain port
-            data_chnl = pasv(sd);
+            pasv(sd);
         } else {
             send_ans(sd, MSG_502);
         }
     }
 }
 
-int epsv(int cmd_chnl)
+int send_pasv_ans(int cmd_chnl_sd, int data_chnl_sd) 
 {
-    int file_chnl = opensock_tcpsrv("127.0.0.1", NULL);
-
-    if(file_chnl == -1) {
-        send_ans(cmd_chnl, MSG_502);
-        return -1;
-    }
-
-    send_epsv_ans(cmd_chnl, file_chnl); // Error checking 
-    return file_chnl;
-}
-
-int opensock_tcpsrv(char *address, char *service) 
-{
-    int sd, addrstat, yes = 1;
-    struct addrinfo hints;
-    struct addrinfo *p, *rp;
-    char ip_addr[INET6_ADDRSTRLEN];
-
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_UNSPEC;     /* Allow IPv4 or IPv6 */
-    hints.ai_socktype = SOCK_STREAM; /* TCP connection */
-    hints.ai_flags = AI_PASSIVE;     /* For wildcard IP address */
-
-    addrstat = getaddrinfo(address, service, &hints, &p);
-    if (addrstat != 0) {
-        fprintf(stderr, "getaddrinfo string: %s\n", gai_strerror(addrstat));
-        return -1;
-    }
-
-    // bind the first socket found
-    for (rp = p; rp != NULL; rp = rp->ai_next){
-        sd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-        if (sd == -1) {
-            perror("opensock_tscpsrv:socket");
-            continue;
-        }
-
-        if (setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1) {
-            perror("setsockopt");
-            return -1;
-        }
-
-        if (bind(sd, rp->ai_addr, rp->ai_addrlen) == -1) {
-            perror("bind");
-            close(sd);
-        }
-
-        break; // socket binded, success
-    }
-
-    if (!rp) {
-        fprintf(stderr, "Server failed to bind\n");
-        return -1;
-    }
-
-    freeaddrinfo(p);
-
-    // and return socket
-    return sd;
-}
-
-
-int send_epsv_ans(int cmd_chnl_sd, int file_chnl_sd) {
-    struct sockaddr_storage addr;
-    socklen_t len = sizeof(addr);
-    char port_str[PORT_MAX_LEN];
-
-    if(getsockname(file_chnl_sd, (struct sockaddr*) &addr, &len) == -1)
-        return -1;
-
-    if(addr.ss_family == AF_INET) {
-        sprintf(port_str, "%hu", ((struct sockaddr_in*) &addr)->sin_port);
-    } else { 
-        sprintf(port_str, "%hu", ((struct sockaddr_in6*) &addr)->sin6_port);
-    }
-
-    send_ans(cmd_chnl_sd, MSG_229, port_str);
-    return 0;
-}
-
-int send_pasv_ans(int cmd_chnl_sd, int data_chnl_sd) {
     struct sockaddr_in addr;
     socklen_t len = sizeof(addr);
     int a, b, c, d, port, gsn;
@@ -450,9 +252,14 @@ int send_pasv_ans(int cmd_chnl_sd, int data_chnl_sd) {
     return 0;
 }
 
-int pasv(int cmd_chnl)
+void pasv(int cmd_chnl, FILE **data_chnl)
 {
-    int file_chnl = opensock_tcpsrv("127.0.0.1", NULL);
+    char port[] = "3490";
+    int file_chnl;
+
+    if(data_chnl) return;
+
+    file_chnl = tcp_listen(port, 1);
 
     if(file_chnl == -1) {
         send_ans(cmd_chnl, MSG_502);
@@ -461,34 +268,11 @@ int pasv(int cmd_chnl)
     }
 
     send_pasv_ans(cmd_chnl, file_chnl); // Error checking 
-    return file_chnl;
+    return fdopen(file_chnl, "r+");
 }
 
-void retr_wrapper(int data_chnl, char *file_path) {
-    struct sockaddr_storage addr;
-    socklen_t addr_len = sizeof(addr);
-    int sd;
-
-    if(fork()) return;
-
-    // if child can't listen to data, exit.
-    if(listen(data_chnl, 10) == -1) {
-        perror("retr_wrapper:listen");
-        exit(EXIT_FAILURE);
-    }
-
-    sd = accept(data_chnl, (struct sockaddr*) &addr, &addr_len);
-    if(sd == -1) {
-        perror("retr_wrapper:accept");
-        exit(EXIT_FAILURE);
-    }
-
-    retr(sd, file_path);
-    close(sd);
-    exit(EXIT_SUCCESS);
-}
-
-void pwd(int sd) {
+void pwd(int sd) 
+{
     char buffer[PATH_MAX];
     if(getcwd(buffer, PATH_MAX)) {
         send_ans(sd, MSG_257, buffer);

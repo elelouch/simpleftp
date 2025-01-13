@@ -11,7 +11,7 @@ int tcp_connection(const char* name, const char* port);
  * port_str: Optional string that will contain the port that the service is using
  * returns: socket file descriptor of the created service 
  */
-int tcp_listen(char *port_str);
+int tcp_listen(char *port, int queue_size);
 
 /* obtains ip address from the socket file descriptor
  * sd: socket descriptor

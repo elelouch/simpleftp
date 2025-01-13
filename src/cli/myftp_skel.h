@@ -15,6 +15,7 @@
 #define BUFSIZE 512
 #define PORTLEN 6 // "65536" + '\0'
 #define FTP_PORT_STR "21"
+#define FTP_DATA_PORT_STR "20"
                     
 // Codes
 #define HELLO_CODE 220
