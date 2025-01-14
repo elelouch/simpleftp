@@ -1,5 +1,7 @@
 #include "myftpsrv_skel.h"
 #include "socketmgmt.h"
+#include <sys/socket.h>
+#include <unistd.h>
 
 int main(int argc, char *argv[])
 {
@@ -149,6 +151,7 @@ void retr(int cmd_chnl, FILE *data_chnl, char *file_path)
         send_ans(cmd_chnl, MSG_226);
 
     // close the file
+    fclose(data_chnl);
     fclose(file);
     exit(EXIT_SUCCESS);
 }
@@ -227,7 +230,7 @@ void operate(int sd)
         } else if (strcmp(op, "FEAT") == 0) {
             send_ans(sd, MSG_211);
         } else if (strcmp(op, "PASV") == 0)  { // server listens for a connection on a certain port
-            pasv(sd);
+            pasv(sd, &data_chnl);
         } else {
             send_ans(sd, MSG_502);
         }
@@ -243,32 +246,37 @@ int send_pasv_ans(int cmd_chnl_sd, int data_chnl_sd)
 
     gsn = getsockname(data_chnl_sd, (struct sockaddr*) &addr, &len);
     if(gsn == -1)
-        return -1;
+        return 0;
 
     inet_ntop(AF_INET, &addr, ipv4_str, INET_ADDRSTRLEN);
     port = htons(addr.sin_port);
     sscanf(ipv4_str,"%d.%d.%d.%d", &a, &b, &c, &d);
     send_ans(cmd_chnl_sd, MSG_227, a, b, c, d, port / 256, port % 256);
-    return 0;
+    return 1;
 }
 
 void pasv(int cmd_chnl, FILE **data_chnl)
 {
     char port[] = "3490";
-    int file_chnl;
+    int data_sd;
+    struct sockaddr_storage addr_stor;
+    socklen_t len = sizeof(addr_stor);
 
-    if(data_chnl) return;
+    if(*data_chnl) return;
 
-    file_chnl = tcp_listen(port, 1);
+    data_sd = tcp_listen(port, 1);
 
-    if(file_chnl == -1) {
+    if(!data_sd) {
         send_ans(cmd_chnl, MSG_502);
         fprintf(stderr, "Error while opening sockets\n");
-        return -1;
+        return;
     }
 
-    send_pasv_ans(cmd_chnl, file_chnl); // Error checking 
-    return fdopen(file_chnl, "r+");
+    send_pasv_ans(cmd_chnl, data_sd); // Error checking 
+
+    data_sd = accept(data_sd, (struct sockaddr *)&addr_stor,&len);
+
+    *data_chnl = fdopen(data_sd, "r+");
 }
 
 void pwd(int sd) 

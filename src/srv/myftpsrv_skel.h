@@ -48,15 +48,20 @@ void retr_wrapper(int sd, char* param);
  */
 int send_pasv_ans(int cmd_chnl_sd, int file_chnl_sd); 
 
-/* Client asks to the server to listen to certain port*/
-int pasv(int sd);
+/* Client asks to the server to listen to certain port
+ * sd: cmd, command channel
+ * data_chnl: data channel, if data_chnl is NULL, 
+ * proceeds to open a new data channel.
+ * */
+void pasv(int cmd_sd, FILE **data_chnl);
 
 /* handles peer connection in the main loop
  * ssd: slave socket descriptor
  *  msd: master socket descriptor
  *  return 
  */
-void handle_connection(int, int);
+void handle_connection(int);
+
 /**
  * function: send answer to the client
  * sd: file descriptor
@@ -86,8 +91,8 @@ int recv_cmd(int sd, char *operation, char *param);
  * sd: socket descriptor
  * file_path: name of the RETR file
  **/
-
 void retr(int sd, FILE *data_chnl, char *file_path);
+
 /**
  * funcion: check valid credentials in ftpusers file
  * user: login user name
