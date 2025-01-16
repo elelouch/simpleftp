@@ -1,5 +1,7 @@
 #include "myftpsrv_skel.h"
 #include "socketmgmt.h"
+#include <arpa/inet.h>
+#include <stdio.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -8,7 +10,8 @@ int main(int argc, char *argv[])
     // reserve sockets and variables space
     struct sockaddr_storage peer_addr; // container big enough to support both ipv4 and ipv6
     socklen_t peer_len = sizeof peer_addr;
-    int sd = 0, peer_sd = 0;
+    char network_addr[AF_INET6] = {'\0'};
+    int sd = 0, peer_sd = 0, peer_port;
 
     // arguments checking
     if (argc != 2) {
@@ -20,8 +23,20 @@ int main(int argc, char *argv[])
 
     if(!sd) exit(EXIT_FAILURE);
 
+    printf("Listening...\n");
+
     while (1) {
         peer_sd = accept(sd, (struct sockaddr *)&peer_addr, &peer_len);
+
+        info_from_sd(peer_sd, network_addr, &peer_port, PEER_INFO);
+
+        printf("Peer IP address : %s\n", network_addr);
+        printf("Peer port       : %d\n", peer_port);
+
+        if(peer_sd == -1){
+            fprintf(stderr, "Error while accepting connection.\n");
+            continue;
+        }
         handle_connection(peer_sd);
     }
 
@@ -102,7 +117,7 @@ int recv_cmd(int sd, char *operation, char *param)
     if (operation[0] == '\0') strcpy(operation, token);
 
     if (strcmp(operation, token)){
-        warn("Abnormal client flow: did not send %s command", operation);
+        warn("Abnormal client flow: did not send %s command\n", operation);
         return 0;
     }
 
@@ -121,7 +136,7 @@ void retr(int cmd_chnl, FILE *data_chnl, char *file_path)
     char buffer[BUFSIZE];
 
     if(!cmd_chnl || !data_chnl) {
-        fprintf(stderr, "retr:Invalid arguments\n");
+        fprintf(stderr, "retr:Invalid arguments, cmd or data channel not available\n");
         return;
     }
 
@@ -237,27 +252,11 @@ void operate(int sd)
     }
 }
 
-int send_pasv_ans(int cmd_chnl_sd, int data_chnl_sd) 
-{
-    struct sockaddr_in addr;
-    socklen_t len = sizeof(addr);
-    int a, b, c, d, port, gsn;
-    char ipv4_str[INET_ADDRSTRLEN];
-
-    gsn = getsockname(data_chnl_sd, (struct sockaddr*) &addr, &len);
-    if(gsn == -1)
-        return 0;
-
-    inet_ntop(AF_INET, &addr, ipv4_str, INET_ADDRSTRLEN);
-    port = htons(addr.sin_port);
-    sscanf(ipv4_str,"%d.%d.%d.%d", &a, &b, &c, &d);
-    send_ans(cmd_chnl_sd, MSG_227, a, b, c, d, port / 256, port % 256);
-    return 1;
-}
-
 void pasv(int cmd_chnl, FILE **data_chnl)
 {
     char port[] = "3490";
+    int port_num = 3490, a,b,c,d;
+    char ip_addr[AF_INET6] = {'\0'};
     int data_sd;
     struct sockaddr_storage addr_stor;
     socklen_t len = sizeof(addr_stor);
@@ -272,9 +271,13 @@ void pasv(int cmd_chnl, FILE **data_chnl)
         return;
     }
 
-    send_pasv_ans(cmd_chnl, data_sd); // Error checking 
+    info_from_sd(cmd_chnl, ip_addr, NULL);
 
-    data_sd = accept(data_sd, (struct sockaddr *)&addr_stor,&len);
+    data_sd = accept(data_sd, (struct sockaddr *)&addr_stor, &len);
+
+    sscanf(ip_addr,"%d.%d.%d.%d", &a, &b, &c, &d);
+
+    send_ans(cmd_chnl, MSG_227, a, b, c, d, port_num / 256, port_num % 256);
 
     *data_chnl = fdopen(data_sd, "r+");
 }

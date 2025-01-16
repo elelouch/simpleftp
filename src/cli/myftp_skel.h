@@ -127,7 +127,7 @@ void ls(struct conn_stats*);
  * The opened file must be handled properly afterwards.
  * returns: data connection file descriptor, 0 if couldn't set connection
  */
-FILE *dataconn(struct conn_stats*, const char* mode);
+int dataconn(struct conn_stats*);
 
 /*
  * Sends STOR command.

@@ -1,5 +1,10 @@
 #ifndef _SOCKET_MGMT_H_
 #define _SOCKET_MGMT_H_
+
+#define PEER_INFO 1
+#define CURRENT_INFO 0
+#define PORTLEN 6
+
 /* creates an active tcp socket.
  * stats: domain name of the service
  * port: service port
@@ -13,9 +18,12 @@ int tcp_connection(const char* name, const char* port);
  */
 int tcp_listen(char *port, int queue_size);
 
-/* obtains ip address from the socket file descriptor
- * sd: socket descriptor
- * dst: destiny buffer, should have a length of at least INET6_ADDRSTRLEN
+/* obtains ip address and port from the socket file descriptor
+ * sd: socket descriptor. 
+ * dst: optional buffer, should have a length of at least INET6_ADDRSTRLEN to place an address
+ * peer: USE PEER_INFO OR CURRENT_INFO. if != 0, selects peer address, else selects socket address.
+ * dst_port: optional integer to write the socket destiny.
  */
-void ip_from_sd(int sd, char *dst);
+void socketinfo(int sd, char *dst, int *dst_port, int peer);
+
 #endif

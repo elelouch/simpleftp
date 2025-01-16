@@ -1,5 +1,6 @@
 #include "myftp_skel.h"
 #include "socketmgmt.h"
+#include <stdio.h>
 
 int main(int argc, char *argv[]) 
 {
@@ -115,7 +116,8 @@ void send_msg(int sd, char *operation, char *param)
 
 }
 
-char *read_input() {
+char *read_input() 
+{
     char *input = malloc(BUFSIZE);
     if (fgets(input, BUFSIZE, stdin)) {
         return strtok(input, "\n");
@@ -171,9 +173,8 @@ int authenticate(struct conn_stats *stats)
 void get(char *file_name, struct conn_stats *stats) 
 {
     char buffer[BUFSIZE];
-    char c;
-    int cmd_sd, code_received;
-    FILE *write_file, *read_file;
+    int cmd_sd, data_sd, code_received, bread, f_size;
+    FILE *write_file;
 
     if(!file_name) {
         fprintf(stderr, "get: invalid argument (file_name)");
@@ -187,11 +188,9 @@ void get(char *file_name, struct conn_stats *stats)
 
     cmd_sd = stats -> cmd_chnl;
 
-    // error checking missing
-    // setups data channel
-    read_file = dataconn(stats, "r");
+    data_sd = dataconn(stats);
 
-    if(!read_file) {
+    if(!data_sd) {
         fprintf(stderr, "can't connect data channel\n");
         return;
     }
@@ -201,25 +200,25 @@ void get(char *file_name, struct conn_stats *stats)
     // check for the response
     code_received = recv_msg(stats, buffer);
 
-    if(code_received / 100 != 1) {
-        fprintf(stderr, "get: Action initialized code (1xx) not received\n");
-        fclose(read_file);
-        return;
+    if(code_received / 100 != 1 ) {
+        if(code_received != 299) {
+            fprintf(stderr, "get: Action initialized code (1xx) not received\n");
+            close(data_sd);
+            return;
+        }
+        // parsing the write_file size from the answer received
+        sscanf(buffer, "File %*s size %d bytes", &f_size);
     }
-
-    // parsing the write_file size from the answer received
-    // sscanf(buffer, "File %*s size %d bytes", &f_size);
 
     write_file = fopen(file_name, "w");
 
-    //receive the write_file
-    while ((c = getc(read_file)) != EOF) {
-        putc(c, write_file);
+    while ((bread = read(data_sd, buffer, BUFSIZE)) > 0) {
+        fwrite(buffer, bread, sizeof(char), write_file);
     }
 
     // close the files 
+    close(data_sd);
     fclose(write_file);
-    fclose(read_file);
 
     // receive the OK from the server
     if(recv_msg(stats, NULL) != TRANSFER_COMPLETE_CODE) {
@@ -278,12 +277,12 @@ void operate(struct conn_stats *stats)
     free(input);
 }
 
-FILE *dataconn(struct conn_stats *stats, const char* mode) 
+int dataconn(struct conn_stats *stats) 
 {
     char buff[BUFSIZE] = {'\0'},
          ip_addr[INET6_ADDRSTRLEN] = {'\0'},
          port_str[PORTLEN] = {'\0'};
-    int data_sd, server_sd;
+    int data_sd;
     int octal_0, octal_1, octal_2, octal_3;
     int port, code_received;
     struct sockaddr peer_addr;
@@ -295,12 +294,7 @@ FILE *dataconn(struct conn_stats *stats, const char* mode)
         exit(EXIT_FAILURE);
     }
 
-    if(!mode) {
-        fprintf(stderr, "dataconn: invalid arguments (mode)\n");
-        exit(EXIT_FAILURE);
-    }
-
-    ip_from_sd(stats -> cmd_chnl, ip_addr);
+    socketinfo(stats -> cmd_chnl, ip_addr, NULL, CURRENT_INFO);
 
     if(stats -> passivemode) {
         send_msg(stats -> cmd_chnl, "PASV", NULL);
@@ -312,21 +306,14 @@ FILE *dataconn(struct conn_stats *stats, const char* mode)
 
         parse_pasvres(buff, port_str);
 
-        data_sd = tcp_connection(ip_addr, port_str);
-
-        if(!data_sd) {
-            fprintf(stderr, "dataconn: couldn't setup data connection\n");
-            return NULL;
-        }
-
-        return fdopen(data_sd, mode);
+        return tcp_connection(ip_addr, port_str);
     }
     
     data_sd = tcp_listen(FTP_DATA_PORT_STR, 1);
 
     if(!data_sd) {
         fprintf(stderr, "dataconn: couldn't listen to tcp socket\n");
-        return NULL;
+        return 0;
     }
 
     port = atoi(FTP_DATA_PORT_STR);
@@ -343,12 +330,11 @@ FILE *dataconn(struct conn_stats *stats, const char* mode)
 
     if(code_received / 100 != 2) {
         fprintf(stderr, "dataconn: OK code not received after PORT command\n");
-        return NULL;
+        close(data_sd);
+        return 0;
     }
 
-    server_sd = accept(data_sd, &peer_addr, &peer_addrlen); // blocks while waiting for server connection
-
-    return fdopen(server_sd, mode);
+    return accept(data_sd, &peer_addr, &peer_addrlen); // blocks while waiting for server connection
 }
 
 void parse_pasvres(char *src, char *dst) 
@@ -371,10 +357,9 @@ void parse_pasvres(char *src, char *dst)
     strncpy(dst, buf, PORTLEN);
 }
 
-void ls (struct conn_stats *stats) 
+void ls(struct conn_stats *stats) 
 {
-    FILE *data = NULL;
-    int bytes_read;
+    int data_sd = 0, bread = 0;
     char buffer[BUFSIZE] = {'\0'};
 
     if (!stats || !stats -> cmd_chnl) {
@@ -382,9 +367,9 @@ void ls (struct conn_stats *stats)
         exit(EXIT_FAILURE);
     }
 
-    data = dataconn(stats, "r");
+    data_sd = dataconn(stats);
 
-    if(!data) {
+    if(!data_sd) {
         fprintf(stderr, "can't connect data channel\n");
         return;
     }
@@ -395,12 +380,11 @@ void ls (struct conn_stats *stats)
         fprintf(stderr, "file action code not received\n");
     }
 
-    while(!feof(data)) {
-        bytes_read = fread(buffer, sizeof(char), BUFSIZE, data);
-        fwrite(buffer, sizeof(char), bytes_read, stdout);
+    while((bread = read(data_sd, buffer, BUFSIZE)) > 0) {
+        fwrite(buffer, sizeof(char), bread, stdout);
     }
 
-    fclose(data);
+    close(data_sd);
 
     if(recv_msg(stats, NULL) != TRANSFER_COMPLETE_CODE) {
         fprintf(stderr, "get: Transfer complete code not received\n");
@@ -427,13 +411,15 @@ void cd(char *dirname, struct conn_stats *stats)
     code_received = recv_msg(stats, NULL);
 
     if (code_received != DIRECTORY_CHANGED_OK_CODE) {
-        fprintf(stderr, "directory was not changed correctly, ok code not received\n");
+        fprintf(stderr, "Directory was not changed successfully. "
+                "Ok code not received\n");
     }
 }
 
 void store(char *filename, struct conn_stats *stats) 
 {
-    FILE *data = NULL, *send_file;
+    int data_sd = 0;
+    FILE *send_file = NULL;
     char buffer[BUFSIZE] = {'\0'};
     int bytes_read = 0;
 
@@ -447,9 +433,9 @@ void store(char *filename, struct conn_stats *stats)
         return;
     }
 
-    data = dataconn(stats, "w");
+    data_sd = dataconn(stats);
 
-    if(!data) {
+    if(!data_sd) {
         fprintf(stderr, "can't connect data channel\n");
         return;
     }
@@ -460,33 +446,33 @@ void store(char *filename, struct conn_stats *stats)
 
     recv_msg(stats, buffer);
 
-    while(!feof(send_file)) {
-        bytes_read = fread(buffer, sizeof(char), BUFSIZE, send_file);
-        fwrite(buffer, sizeof(char), bytes_read, data);
+    while((bytes_read = fread(buffer, sizeof(char), BUFSIZE, send_file)) > 0) {
+        write(data_sd, buffer, BUFSIZE);
     }
 
-    fclose(data);
+    close(data_sd);
 
     if(recv_msg(stats, NULL) != TRANSFER_COMPLETE_CODE) {
         fprintf(stderr, "get: transfer complete code not received\n");
     }
 }
-
+ 
 void pwd(struct conn_stats *stats) 
 {
     char buffer[BUFSIZE] = {'\0'};
     int code_received = 0;
 
     if (!stats || !stats -> cmd_chnl) {
-        fprintf(stderr, "ls: invalid argument (stats)\n");
-        exit(EXIT_FAILURE);
+        fprintf(stderr, "pwd: invalid argument (stats)\n");
+        return;
     }
+
     send_msg(stats -> cmd_chnl, "PWD", NULL);
 
     code_received = recv_msg(stats, buffer);
 
     if(!code_received) {
-        fprintf(stderr, "test\n");
+        fprintf(stderr, "pwd: code not received\n");
     }
 
     printf("%s\n", buffer);
