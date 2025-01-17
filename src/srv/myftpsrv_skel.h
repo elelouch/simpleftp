@@ -22,6 +22,7 @@
 #define BACKLOG_SIZE 10
 #define PORT_MAX_LEN 5 + 1 // (2^16 = 65536, 5 caracteres maximo) + '\0'
 
+#define MSG_150 "Opening BINARY mode data connection for %s (%d bytes).\r\n"
 #define MSG_125 "125 Data connection open, starting transfer\r\n"
 #define MSG_211 "211 - RETR <path>: retrieve a file\r\n"
 #define MSG_215 "215 UNIX Type\r\n"
@@ -110,3 +111,10 @@ int authenticate(int sd);
  *  sd: socket descriptor
  **/
 void operate(int sd);
+
+/**
+ * Send ls response
+ * cmd_chnl: command channel
+ * data_chnl: data channel
+ */
+void ls(int cmd_chnl, int data_chnl);

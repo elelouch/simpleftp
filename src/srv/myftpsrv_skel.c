@@ -150,8 +150,6 @@ void retr(int cmd_chnl, int data_chnl, char *file_path)
     strcat(full_file_path, "/");
     strcat(full_file_path, file_path);
 
-    printf("file_path: %s\n", full_file_path);
-
     file = fopen(full_file_path, "r");
     if (!file) {
         send_ans(cmd_chnl, MSG_550); // TODO: suggest to use LIST command
@@ -162,7 +160,8 @@ void retr(int cmd_chnl, int data_chnl, char *file_path)
     fseek(file, 0L, SEEK_END);
     fsize = ftell(file);
     fseek(file, 0L, SEEK_SET);
-    send_ans(cmd_chnl, MSG_299, file_path, fsize);
+    // send_ans(cmd_chnl, MSG_299, file_path, fsize);
+    send_ans(cmd_chnl, MSG_150, file_path, fsize);
 
     // important delay to avoid problems with buffer size
     sleep(1);
@@ -236,7 +235,7 @@ int authenticate(int sd)
 void operate(int sd)
 {
     char op[CMDSIZE], param[PARSIZE];
-    int data_chnl = 0;
+    int data_chnl = 0, backup = 0;
 
     while (1) {
         op[0] = param[0] = '\0';
@@ -246,20 +245,56 @@ void operate(int sd)
 
         if (strcmp(op, "RETR") == 0 && data_chnl) {
             retr(sd, data_chnl, param);
+            data_chnl = 0;
         } else if (strcmp(op, "QUIT") == 0) {
             send_ans(sd, MSG_221);
             close(sd);
             exit(EXIT_SUCCESS);
+        } else if (strcmp(op, "LIST") == 0) {
+            ls(sd, data_chnl);
+            data_chnl = 0;
         } else if (strcmp(op, "SYST") == 0) {
             send_ans(sd, MSG_215);
         } else if (strcmp(op, "FEAT") == 0) {
             send_ans(sd, MSG_211);
         } else if (strcmp(op, "PASV") == 0)  { // server listens for a connection on a certain port
-            pasv(sd);
+            data_chnl = pasv(sd);
+            backup = data_chnl;
         } else {
             send_ans(sd, MSG_502);
         }
     }
+}
+
+void ls(int cmd_chnl, int data_chnl) 
+{
+    FILE *popen_res = NULL;
+    char buffer[BUFSIZE];
+    int bread;
+
+    if (!cmd_chnl || !data_chnl) {
+        fprintf(stderr, "ls: not valid socket descriptors\n");
+        return;
+    }
+
+    popen_res = popen("ls -ln", "r");
+
+    if(!popen_res) {
+        perror("popen");
+        return;
+    }
+
+    send_ans(cmd_chnl, MSG_125);
+
+
+    while((bread = fread(buffer, sizeof(char), BUFSIZE, popen_res))) {
+        write(data_chnl, buffer, bread);
+    }
+
+    pclose(popen_res);
+    close(data_chnl);
+
+    send_ans(cmd_chnl, MSG_226);
 }
 
 int pasv(int cmd_chnl)
