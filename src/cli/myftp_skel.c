@@ -72,10 +72,8 @@ int recv_msg(struct conn_stats *stats, char *text)
     // receive the answer
     recv_s = recv(stats -> cmd_chnl, buffer, BUFSIZE, 0);
     // error checking
-    if (recv_s == -1) {
+    if (recv_s == -1) 
         perror("recv");
-        fprintf(stderr, "recv_msg: Error during recv");
-    }
 
     if (recv_s == 0) {
         close(stats -> cmd_chnl);

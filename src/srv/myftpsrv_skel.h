@@ -41,7 +41,6 @@
 
 /* executes retr concurrently using sd as file destination
  */
-void retr_wrapper(int sd, char* param);
 /* builds the pasv response using the opened sd
  * return: -1 on error
  *          0 on success
@@ -53,7 +52,7 @@ int send_pasv_ans(int cmd_chnl_sd, int file_chnl_sd);
  * data_chnl: data channel, if data_chnl is NULL, 
  * proceeds to open a new data channel.
  * */
-void pasv(int cmd_sd, FILE **data_chnl);
+int pasv(int cmd_sd);
 
 /* handles peer connection in the main loop
  * ssd: slave socket descriptor
@@ -91,7 +90,7 @@ int recv_cmd(int sd, char *operation, char *param);
  * sd: socket descriptor
  * file_path: name of the RETR file
  **/
-void retr(int sd, FILE *data_chnl, char *file_path);
+void retr(int cmd_chnl, int data_chnl, char *file_path);
 
 /**
  * funcion: check valid credentials in ftpusers file

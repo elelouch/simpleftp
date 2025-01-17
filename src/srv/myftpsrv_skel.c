@@ -1,7 +1,9 @@
 #include "myftpsrv_skel.h"
 #include "socketmgmt.h"
 #include <arpa/inet.h>
+#include <linux/limits.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -28,7 +30,7 @@ int main(int argc, char *argv[])
     while (1) {
         peer_sd = accept(sd, (struct sockaddr *)&peer_addr, &peer_len);
 
-        info_from_sd(peer_sd, network_addr, &peer_port, PEER_INFO);
+        socketinfo(peer_sd, network_addr, &peer_port, PEER_INFO);
 
         printf("Peer IP address : %s\n", network_addr);
         printf("Peer port       : %d\n", peer_port);
@@ -87,7 +89,7 @@ int send_ans(int sd, char *message, ...)
 
 int recv_cmd(int sd, char *operation, char *param)
 {
-    char buffer[BUFSIZE], *token;
+    char buffer[BUFSIZE] = {'\0'}, *token;
     int recv_s;
 
     // receive the command in the buffer and check for errors
@@ -104,6 +106,7 @@ int recv_cmd(int sd, char *operation, char *param)
 
     // expunge the terminator characters from the buffer
     buffer[strcspn(buffer, "\r\n")] = 0;
+    printf("Received from client: %s\n", buffer);
 
     // complex parsing of the buffer
     // extract command received in operation if not set \0
@@ -128,12 +131,13 @@ int recv_cmd(int sd, char *operation, char *param)
     return 1;
 }
 
-void retr(int cmd_chnl, FILE *data_chnl, char *file_path)
+void retr(int cmd_chnl, int data_chnl, char *file_path)
 {
     FILE *file;
     int bread;
     long fsize;
     char buffer[BUFSIZE];
+    char full_file_path[PATH_MAX] = {'\0'};
 
     if(!cmd_chnl || !data_chnl) {
         fprintf(stderr, "retr:Invalid arguments, cmd or data channel not available\n");
@@ -141,7 +145,14 @@ void retr(int cmd_chnl, FILE *data_chnl, char *file_path)
     }
 
     // check if file exists if not inform error to client
-    file = fopen(file_path, "r");
+    getcwd(full_file_path, PATH_MAX);
+    strcat(full_file_path, "/files");
+    strcat(full_file_path, "/");
+    strcat(full_file_path, file_path);
+
+    printf("file_path: %s\n", full_file_path);
+
+    file = fopen(full_file_path, "r");
     if (!file) {
         send_ans(cmd_chnl, MSG_550); // TODO: suggest to use LIST command
         return;
@@ -158,7 +169,7 @@ void retr(int cmd_chnl, FILE *data_chnl, char *file_path)
 
     // send the file
     while ((bread = fread(buffer, sizeof(char), BUFSIZE, file))) 
-        fwrite(buffer, sizeof(char), bread, data_chnl);
+        write(data_chnl, buffer, BUFSIZE);
 
     if (ferror(file))
         send_ans(cmd_chnl, "Error while reading %s", file_path);
@@ -166,8 +177,9 @@ void retr(int cmd_chnl, FILE *data_chnl, char *file_path)
         send_ans(cmd_chnl, MSG_226);
 
     // close the file
-    fclose(data_chnl);
+    close(data_chnl);
     fclose(file);
+
     exit(EXIT_SUCCESS);
 }
 
@@ -221,12 +233,10 @@ int authenticate(int sd)
     return send_ans(sd, MSG_230, user);
 }
 
-// active -> client establishes the command channel, server is responsible for the data channel.
-// pasive -> client establishes both channels.
 void operate(int sd)
 {
     char op[CMDSIZE], param[PARSIZE];
-    FILE *data_chnl = NULL;
+    int data_chnl = 0;
 
     while (1) {
         op[0] = param[0] = '\0';
@@ -245,14 +255,14 @@ void operate(int sd)
         } else if (strcmp(op, "FEAT") == 0) {
             send_ans(sd, MSG_211);
         } else if (strcmp(op, "PASV") == 0)  { // server listens for a connection on a certain port
-            pasv(sd, &data_chnl);
+            pasv(sd);
         } else {
             send_ans(sd, MSG_502);
         }
     }
 }
 
-void pasv(int cmd_chnl, FILE **data_chnl)
+int pasv(int cmd_chnl)
 {
     char port[] = "3490";
     int port_num = 3490, a,b,c,d;
@@ -261,25 +271,26 @@ void pasv(int cmd_chnl, FILE **data_chnl)
     struct sockaddr_storage addr_stor;
     socklen_t len = sizeof(addr_stor);
 
-    if(*data_chnl) return;
+    if(!cmd_chnl) {
+        fprintf(stderr, "pasv: cmd_chnl socket not valid");
+        return 0;
+    }
 
     data_sd = tcp_listen(port, 1);
 
     if(!data_sd) {
         send_ans(cmd_chnl, MSG_502);
         fprintf(stderr, "Error while opening sockets\n");
-        return;
+        return 0;
     }
 
-    info_from_sd(cmd_chnl, ip_addr, NULL);
-
-    data_sd = accept(data_sd, (struct sockaddr *)&addr_stor, &len);
+    socketinfo(cmd_chnl, ip_addr, NULL, CURRENT_INFO);
 
     sscanf(ip_addr,"%d.%d.%d.%d", &a, &b, &c, &d);
 
     send_ans(cmd_chnl, MSG_227, a, b, c, d, port_num / 256, port_num % 256);
 
-    *data_chnl = fdopen(data_sd, "r+");
+    return accept(data_sd, (struct sockaddr *)&addr_stor, &len);
 }
 
 void pwd(int sd) 
