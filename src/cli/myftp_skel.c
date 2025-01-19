@@ -306,7 +306,7 @@ int dataconn(struct conn_stats *stats)
         return tcp_connection(ip_addr, port_str);
     }
     
-    data_sd = tcp_listen(FTP_DATA_PORT_STR, 1);
+    data_sd = tcp_listen("0", 1);
 
     if(!data_sd) {
         fprintf(stderr, "dataconn: couldn't listen to tcp socket\n");

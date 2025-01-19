@@ -28,7 +28,7 @@ int tcp_listen(char *port, int queue_size)
 
     if (addrstate != 0) {
         fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(addrstate));
-        return 0;
+        return -1;
     }
 
     // create socket and connect to the first addrinfo available on the list, check for errors
@@ -51,25 +51,25 @@ int tcp_listen(char *port, int queue_size)
 
     if(!rp) {
         fprintf(stderr, "tcp_listen: Couldn't bind\n");
-        return 0;
+        return -1;
     }
 
     if(listen(sd, queue_size) == -1) {
         perror("tcp_listen");
         close(sd);
-        return 0;
+        return -1;
     }
 
     return sd;
 }
 
-void get_ip_port(struct sockaddr* addr, char *dst, int *port)
+int get_ip_port(struct sockaddr* addr, char *dst, int *port)
 {
     int af = 0;
 
     if(!addr) {
         fprintf(stderr, "get_ip_port: invalid arguments\n");
-        return;
+        return -1;
     }
 
     af = addr->sa_family;
@@ -80,7 +80,7 @@ void get_ip_port(struct sockaddr* addr, char *dst, int *port)
 
         if(dst && !inet_ntop(af, &s -> sin_addr, dst, INET_ADDRSTRLEN)){
             perror("inet_ntop");
-            return;
+            return -1;
         }
     } else {
         struct sockaddr_in6 *s = (struct sockaddr_in6*) &addr;
@@ -89,12 +89,14 @@ void get_ip_port(struct sockaddr* addr, char *dst, int *port)
 
         if(dst && !inet_ntop(af, &s -> sin6_addr, dst, INET6_ADDRSTRLEN)){
             perror("inet_ntop");
-            return;
+            return -1;
         }
     }
+
+    return 0;
 }
 
-void socketinfo(int sd, char *ip_dst, int *port_ip_dst, int peer) 
+int socketinfo(int sd, char *ip_dst, int *port_ip_dst, int peer) 
 {
     struct sockaddr addr;
     socklen_t addrlen = sizeof(addr);
@@ -102,7 +104,7 @@ void socketinfo(int sd, char *ip_dst, int *port_ip_dst, int peer)
 
     if(!sd){
         fprintf(stderr, "ip_from_sd: sd not valid\n");
-        return;
+        return -1;
     }
     
     res = peer ? 
@@ -112,10 +114,10 @@ void socketinfo(int sd, char *ip_dst, int *port_ip_dst, int peer)
 
     if(res == -1) {
         perror("socketinfo");
-        return;
+        return -1;
     }
 
-    get_ip_port(&addr, ip_dst, port_ip_dst);
+    return get_ip_port(&addr, ip_dst, port_ip_dst);
 }
 
 
@@ -126,7 +128,7 @@ int tcp_connection (const char* name, const char* port)
     struct addrinfo *results = NULL, *rp = NULL;
     int addrstate = 0, sd = 0;
 
-    if(!name || !port) return 0;
+    if(!name || !port) return -1;
 
     memset(&hints, 0, sizeof(hints));
 
@@ -137,7 +139,7 @@ int tcp_connection (const char* name, const char* port)
 
     if((addrstate = getaddrinfo(name, port, &hints, &results)) != 0) {
         fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(addrstate));
-        return 0;
+        return -1;
     }
 
     // create socket and connect to the first addrinfo available on the list, check for errors

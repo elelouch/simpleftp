@@ -24,6 +24,6 @@ int tcp_listen(char *port, int queue_size);
  * peer: USE PEER_INFO OR CURRENT_INFO. if != 0, selects peer address, else selects socket address.
  * dst_port: optional integer to write the socket destiny.
  */
-void socketinfo(int sd, char *dst, int *dst_port, int peer);
+int socketinfo(int sd, char *dst, int *dst_port, int peer);
 
 #endif
