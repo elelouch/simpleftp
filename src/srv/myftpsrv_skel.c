@@ -23,22 +23,26 @@ int main(int argc, char *argv[])
 
     sd = tcp_listen(argv[1], BACKLOG_SIZE);
 
-    if(!sd) exit(EXIT_FAILURE);
+    if(sd == -1) exit(EXIT_FAILURE);
 
     printf("Listening...\n");
 
     while (1) {
         peer_sd = accept(sd, (struct sockaddr *)&peer_addr, &peer_len);
 
-        socketinfo(peer_sd, network_addr, &peer_port, PEER_INFO);
-
-        printf("Peer IP address : %s\n", network_addr);
-        printf("Peer port       : %d\n", peer_port);
-
         if(peer_sd == -1){
             fprintf(stderr, "Error while accepting connection.\n");
             continue;
         }
+
+        if(socketinfo(peer_sd, network_addr, &peer_port, PEER_INFO) == -1) {
+            fprintf(stderr, "Couldn't read info from socket.\n");
+            continue;
+        }
+
+        printf("Peer IP address : %s\n", network_addr);
+        printf("Peer port       : %d\n", peer_port);
+
         handle_connection(peer_sd);
     }
 
@@ -224,8 +228,7 @@ int authenticate(int sd)
         return 0;
     }
 
-    if (!check_credentials(user, pass))
-    {
+    if (!check_credentials(user, pass)) {
         send_ans(sd, MSG_530);
         return 0;
     }
@@ -235,7 +238,7 @@ int authenticate(int sd)
 void operate(int sd)
 {
     char op[CMDSIZE], param[PARSIZE];
-    int data_chnl = 0, backup = 0;
+    int data_chnl = 0, result;
 
     while (1) {
         op[0] = param[0] = '\0';
@@ -259,7 +262,7 @@ void operate(int sd)
             send_ans(sd, MSG_211);
         } else if (strcmp(op, "PASV") == 0)  { // server listens for a connection on a certain port
             data_chnl = pasv(sd);
-            backup = data_chnl;
+            result = data_chnl;
         } else {
             send_ans(sd, MSG_502);
         }
@@ -269,8 +272,8 @@ void operate(int sd)
 void ls(int cmd_chnl, int data_chnl) 
 {
     FILE *popen_res = NULL;
-    char buffer[BUFSIZE];
-    int bread;
+    char buffer[BUFSIZE], c;
+    int i = 0;
 
     if (!cmd_chnl || !data_chnl) {
         fprintf(stderr, "ls: not valid socket descriptors\n");
@@ -286,23 +289,30 @@ void ls(int cmd_chnl, int data_chnl)
 
     send_ans(cmd_chnl, MSG_125);
 
-
-    while((bread = fread(buffer, sizeof(char), BUFSIZE, popen_res))) {
-        write(data_chnl, buffer, bread);
+    while((c = fgetc(popen_res)) != EOF) {
+        if(c == '\n') {
+                buffer[i++] = '\r';
+        }
+        buffer[i++] = c;
+        if(i > BUFSIZE) {
+                write(data_chnl, buffer, BUFSIZE);
+                i = 0;
+        }
     }
+    buffer[i] = EOF;
+    write(data_chnl, buffer, i);
 
-    pclose(popen_res);
     close(data_chnl);
+    pclose(popen_res);
 
     send_ans(cmd_chnl, MSG_226);
 }
 
 int pasv(int cmd_chnl)
 {
-    char port[] = "3490";
-    int port_num = 3490, a,b,c,d;
+    int a,b,c,d;
     char ip_addr[AF_INET6] = {'\0'};
-    int data_sd;
+    int data_chnl, port;
     struct sockaddr_storage addr_stor;
     socklen_t len = sizeof(addr_stor);
 
@@ -311,21 +321,29 @@ int pasv(int cmd_chnl)
         return 0;
     }
 
-    data_sd = tcp_listen(port, 1);
-
-    if(!data_sd) {
+    data_chnl = tcp_listen("0", 1);
+    
+    if(data_chnl == -1) {
         send_ans(cmd_chnl, MSG_502);
         fprintf(stderr, "Error while opening sockets\n");
         return 0;
     }
 
-    socketinfo(cmd_chnl, ip_addr, NULL, CURRENT_INFO);
+    if(socketinfo(cmd_chnl, ip_addr, NULL, CURRENT_INFO) == -1) {
+        fprintf(stderr, "Couldn't get ip address from cmd_chnl\n");
+        return -1;
+    }
+
+    if(socketinfo(data_chnl, NULL, &port, CURRENT_INFO) == -1) {
+        fprintf(stderr, "Couldn't get port from data socket\n");
+        return -1;
+    }
 
     sscanf(ip_addr,"%d.%d.%d.%d", &a, &b, &c, &d);
 
-    send_ans(cmd_chnl, MSG_227, a, b, c, d, port_num / 256, port_num % 256);
+    send_ans(cmd_chnl, MSG_227, a, b, c, d, port / 256, port % 256);
 
-    return accept(data_sd, (struct sockaddr *)&addr_stor, &len);
+    return accept(data_chnl, (struct sockaddr *)&addr_stor, &len);
 }
 
 void pwd(int sd) 
