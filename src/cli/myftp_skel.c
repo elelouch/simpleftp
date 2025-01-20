@@ -7,7 +7,6 @@ int main(int argc, char *argv[])
     int sd;
     char *network_address, *port, c;
     struct conn_stats stats;
-
     // arguments checking
     if(argc <= 2) {
         fprintf(stderr, "Usage: %s -[OPTIONS]... SERVER_NAME SERVER_PORT\n"
@@ -21,7 +20,7 @@ int main(int argc, char *argv[])
     network_address = argv[argc - 2];
     port = argv[argc - 1];
 
-    sd = tcp_connection(network_address, port, &stats.cmd_sa);
+    sd = tcp_connection(network_address, port, (struct sockaddr*) &stats.sau_cmd);
 
     if(!sd) {
         fprintf(stderr, "main: Couldn't connect to server, name or port might be wrong\n");
@@ -187,7 +186,7 @@ void get(char *file_name, struct conn_stats *stats)
 
     data_sd = dataconn(stats);
 
-    if(!data_sd) {
+    if(data_sd == -1) {
         fprintf(stderr, "can't connect data channel\n");
         return;
     }
@@ -280,10 +279,9 @@ int dataconn(struct conn_stats *stats)
          ip_addr[INET6_ADDRSTRLEN] = {'\0'},
          port_str[PORTLEN] = {'\0'};
     int data_sd;
-    int octal_0, octal_1, octal_2, octal_3;
-    int port, code_received;
-    struct sockaddr peer_addr;
-    socklen_t peer_addrlen = sizeof(peer_addr);
+    int port, code_received, af = 0;
+    struct sockaddr_util *cmd_sa = NULL, *data_sa = NULL;
+    socklen_t cmd_sa_size = 0, data_sa_size = 0;
 
     // error checking
     if(!stats || !stats -> cmd_chnl) {
@@ -291,67 +289,84 @@ int dataconn(struct conn_stats *stats)
         exit(EXIT_FAILURE);
     }
     
-    inet_ntop(stats -> cmd_sa . ss_family, stats -> cmd_sa, ip_addr:w
+    cmd_sa = &stats -> sau_cmd;
+    data_sa = &stats -> sau_data;
+
+    cmd_sa_size = sizeof(*cmd_sa);
+    data_sa_size = sizeof(*data_sa);
+
+    af = cmd_sa -> u.sa.sa_family;
+
+    if(!inet_ntop(af, &cmd_sa->u.sa4.sin_addr, ip_addr, cmd_sa_size)){
+        perror("dataconn:inet_ntop");
+        return -1;
+    }
 
     if(stats -> passivemode) {
         send_msg(stats -> cmd_chnl, "PASV", NULL);
 
         if (recv_msg(stats, buff) != ENTERING_PASV_MODE_CODE) {
             fprintf(stderr, "dataconn: Abnormal flow\n");
-            return 0;
+            return -1;
         }
 
-        parse_pasvres(buff, port_str);
+        sprintf(port_str, "%d", port_from_pasvres(buff));
 
-        return tcp_connection(ip_addr, port_str);
+        data_sd = tcp_connection(ip_addr, port_str, (struct sockaddr*) cmd_sa);
+        stats -> data_chnl = data_sd;
+
+        return data_sd;
     }
     
-    data_sd = tcp_listen("0", 1);
+    data_sd = tcp_listen("0", 1, (struct sockaddr*) data_sa);
 
     if(!data_sd) {
         fprintf(stderr, "dataconn: couldn't listen to tcp socket\n");
-        return 0;
+        return -1;
     }
 
-    port = atoi(FTP_DATA_PORT_STR);
-                                                            
-    // takes each byte of the address
-    sscanf(ip_addr, "%d.%d.%d.%d", &octal_0, &octal_1, &octal_2, &octal_3);
+    port = ntohs(data_sa -> u.sa4.sin_port);
 
-    // rewrites the address in the PORT format
-    sprintf(buff, "%d,%d,%d,%d,%d,%d", octal_0, octal_1, octal_2, octal_3, port / 256, port % 256);
-
-    send_msg(stats -> cmd_chnl, "PORT", buff);
+    send_msg(stats -> cmd_chnl, "PORT", generate_port_res(port, ip_addr, buff));
                                                             
     code_received = recv_msg(stats, NULL); 
 
     if(code_received / 100 != 2) {
         fprintf(stderr, "dataconn: OK code not received after PORT command\n");
         close(data_sd);
-        return 0;
+        return -1;
     }
 
-    return accept(data_sd, &peer_addr, &peer_addrlen); // blocks while waiting for server connection
+    data_sd = accept(data_sd, (struct sockaddr*)data_sa, &data_sa_size); // blocks while waiting for server connection
+    stats -> data_chnl = data_sd;
+
+    return data_sd;
 }
 
-void parse_pasvres(char *src, char *dst) 
+char *generate_port_res(int port, char *ip_addr, char *dst)
 {
-    char buf[PORTLEN];
+    int octal_0, octal_1, octal_2, octal_3;
+    sscanf(ip_addr, "%d.%d.%d.%d", &octal_0, &octal_1, &octal_2, &octal_3);
+    sprintf(dst, "%d,%d,%d,%d,%d,%d", octal_0, octal_1, octal_2, octal_3, port / 256, port % 256);
+    return dst;
+}
+
+int port_from_pasvres(char *pasvres) 
+{
     char *inside_parentheses;
     int port_lowerbits = 0;
     int port_upperbits = 0;
 
-    if(!src || !dst) {
-        fprintf(stderr, "parse_pasvres, 'src' or 'dst' not available");
+    if(!pasvres) {
+        fprintf(stderr, "pasvres not valid");
         exit(EXIT_FAILURE);
     }
 
-    strtok(src,"()");
+    strtok(pasvres,"()");
     inside_parentheses = strtok(NULL,"()");
 
     sscanf(inside_parentheses, "%*d,%*d,%*d,%*d,%d,%d", &port_upperbits, &port_lowerbits);
-    sprintf(buf, "%d", port_upperbits * 256 + port_lowerbits);
-    strncpy(dst, buf, PORTLEN);
+    return 256 * port_upperbits + port_lowerbits;
 }
 
 void ls(struct conn_stats *stats) 
@@ -366,7 +381,7 @@ void ls(struct conn_stats *stats)
 
     data_sd = dataconn(stats);
 
-    if(!data_sd) {
+    if(data_sd == -1) {
         fprintf(stderr, "can't connect data channel\n");
         return;
     }
@@ -432,7 +447,7 @@ void store(char *filename, struct conn_stats *stats)
 
     data_sd = dataconn(stats);
 
-    if(!data_sd) {
+    if(data_sd == -1) {
         fprintf(stderr, "can't connect data channel\n");
         return;
     }

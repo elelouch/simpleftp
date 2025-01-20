@@ -43,35 +43,23 @@
 
 #define PROMPT "ftp> "
 
-/* Structure passed through function calls.
- * Why not using a global state? It is messy, every function can potentially change it.
- * Plus, it is difficult to remember whether a variable belongs to the global scope or local 
- * scope during the function definition.
- * This helps tracking changes.
- */
-struct conn_stats {
-    int cmd_chnl;
-    int data_chnl;
-    struct sockaddr_storage cmd_sa;
-    struct sockaddr_storage data_sa;
-    int passivemode;
-    int verbose;
-};
+
 
 /* Sends CWD to the server.
  * dirname: directory to change
  * stats: state passed through function calls
  */
-void cd (char *dirname, struct conn_stats *stats);
+void cd(char *dirname, struct conn_stats *stats);
 
 /* Parses the PASV answer and calculates the port based on the answer received. 
  * The network address of the response is ignored in this implementation. It is assumed
  * that the address is the same one that belong to the server.
  *
  * src: input string with the whole answer. E.g: "Entering Passive Mode (x,x,x,x,y,y)"
- * dst: port obtained from the input*/
-void parse_pasvres (char *src, char *dst);
+ * */
+int port_from_pasvres(char *src);
 
+char *generate_port_res(int port, char *ip_addr, char *dst);
 /**
  * function: receives and analizes the answer from the server
  * sd: socket descriptor
