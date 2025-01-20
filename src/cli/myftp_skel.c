@@ -21,7 +21,7 @@ int main(int argc, char *argv[])
     network_address = argv[argc - 2];
     port = argv[argc - 1];
 
-    sd = tcp_connection(network_address, port);
+    sd = tcp_connection(network_address, port, &stats.cmd_sa);
 
     if(!sd) {
         fprintf(stderr, "main: Couldn't connect to server, name or port might be wrong\n");
@@ -290,8 +290,8 @@ int dataconn(struct conn_stats *stats)
         fprintf(stderr, "dataconn: invalid arguments (stats)\n");
         exit(EXIT_FAILURE);
     }
-
-    socketinfo(stats -> cmd_chnl, ip_addr, NULL, CURRENT_INFO);
+    
+    inet_ntop(stats -> cmd_sa . ss_family, stats -> cmd_sa, ip_addr:w
 
     if(stats -> passivemode) {
         send_msg(stats -> cmd_chnl, "PASV", NULL);

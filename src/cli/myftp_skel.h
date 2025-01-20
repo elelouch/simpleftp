@@ -9,6 +9,7 @@
 #include <err.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include "socketmgmt.h"
 
 // Constants
 #define DOMAINLEN 256
@@ -42,7 +43,6 @@
 
 #define PROMPT "ftp> "
 
-
 /* Structure passed through function calls.
  * Why not using a global state? It is messy, every function can potentially change it.
  * Plus, it is difficult to remember whether a variable belongs to the global scope or local 
@@ -51,6 +51,9 @@
  */
 struct conn_stats {
     int cmd_chnl;
+    int data_chnl;
+    struct sockaddr_storage cmd_sa;
+    struct sockaddr_storage data_sa;
     int passivemode;
     int verbose;
 };

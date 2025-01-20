@@ -1,3 +1,5 @@
+#include <sys/socket.h>
+
 #ifndef _SOCKET_MGMT_H_
 #define _SOCKET_MGMT_H_
 
@@ -5,18 +7,19 @@
 #define CURRENT_INFO 0
 #define PORTLEN 6
 
+
 /* creates an active tcp socket.
- * stats: domain name of the service
- * port: service port
+ * stats: domain name of the service. Nullable.
+ * port: service port, use "0" for picking a random port. Nullable.
  * returns: socket file descriptor to the service */
-int tcp_connection(const char* name, const char* port);
+int tcp_connection(const char* name, const char* port, struct sockaddr_storage*);
 
 /* Creates a passive tcp socket.
  * name: domain name
  * port_str: Optional string that will contain the port that the service is using
  * returns: socket file descriptor of the created service 
  */
-int tcp_listen(char *port, int queue_size);
+int tcp_listen(char *port, int queue_size, struct sockaddr_storage*);
 
 /* obtains ip address and port from the socket file descriptor
  * sd: socket descriptor. 
@@ -24,6 +27,6 @@ int tcp_listen(char *port, int queue_size);
  * peer: USE PEER_INFO OR CURRENT_INFO. if != 0, selects peer address, else selects socket address.
  * dst_port: optional integer to write the socket destiny.
  */
-int socketinfo(int sd, char *dst, int *dst_port, int peer);
+//  int socketinfo(int sd, char *dst, int *dst_port, int peer);
 
 #endif
