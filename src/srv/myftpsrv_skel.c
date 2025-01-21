@@ -1,4 +1,5 @@
 #include "myftpsrv_skel.h"
+#include <netinet/in.h>
 
 int main(int argc, char *argv[])
 {
@@ -6,7 +7,7 @@ int main(int argc, char *argv[])
     struct sockaddr_storage peer_addr, own_addr; // container big enough to support both ipv4 and ipv6
     socklen_t peer_len = sizeof peer_addr;
     char s[INET6_ADDRSTRLEN] = {'\0'};
-    int sd = 0, peer_sd = 0, peer_port;
+    int sd = 0, peer_sd = 0;
     struct sockaddr_in6 *in6_addr;
     struct sockaddr_in *in_addr;
 
@@ -32,12 +33,15 @@ int main(int argc, char *argv[])
 
         if(peer_addr.ss_family == AF_INET6) {
             in6_addr = (struct sockaddr_in6*) &peer_addr;
-            inet_ntop(in6_addr.sin6_family, in6_addr.sin6_addr,
+            inet_ntop(in6_addr->sin6_family, &in6_addr -> sin6_addr, s, sizeof s);
             printf("Peer IP address : %s\n", s);
-            printf("Peer port       : %d\n", ntohs(((struct sockaddr_in6*)&peer_addr)->sin6_port));
+            printf("Peer port       : %d\n", ntohs(in6_addr->sin6_port));
         } else {
             printf("Peer IP address : %s\n", s);
-            printf("Peer port       : %d\n", ntohs(((struct sockaddr_in*)&peer_addr)->sin_port));
+            in_addr = (struct sockaddr_in*) &peer_addr;
+            inet_ntop(in_addr->sin_family, &in_addr -> sin_addr, s, sizeof s);
+            printf("Peer IP address : %s\n", s);
+            printf("Peer port       : %d\n", ntohs(in_addr->sin_port));
         }
 
         handle_connection(peer_sd);
@@ -141,7 +145,7 @@ void retr(struct conn_stats *stats, char *file_path)
     char buffer[BUFSIZE];
     char full_file_path[PATH_MAX] = {'\0'};
 
-    if(!cmd_chnl || !data_chnl) {
+    if(!stats) {
         fprintf(stderr, "retr:Invalid arguments, cmd or data channel not available\n");
         return;
     }
@@ -154,7 +158,7 @@ void retr(struct conn_stats *stats, char *file_path)
 
     file = fopen(full_file_path, "r");
     if (!file) {
-        send_ans(cmd_chnl, MSG_550); // TODO: suggest to use LIST command
+        send_ans(stats -> cmd_chnl, MSG_550); // TODO: suggest to use LIST command
         return;
     }
 
@@ -163,22 +167,23 @@ void retr(struct conn_stats *stats, char *file_path)
     fsize = ftell(file);
     fseek(file, 0L, SEEK_SET);
     // send_ans(cmd_chnl, MSG_299, file_path, fsize);
-    send_ans(cmd_chnl, MSG_150, file_path, fsize);
+    send_ans(stats -> cmd_chnl, MSG_150, file_path, fsize);
 
     // important delay to avoid problems with buffer size
     sleep(1);
 
     // send the file
     while ((bread = fread(buffer, sizeof(char), BUFSIZE, file))) 
-        write(data_chnl, buffer, BUFSIZE);
+        write(stats -> data_chnl, buffer, BUFSIZE);
 
     if (ferror(file))
-        send_ans(cmd_chnl, "Error while reading %s", file_path);
+        send_ans(stats -> cmd_chnl, "Error while reading %s", file_path);
     else
-        send_ans(cmd_chnl, MSG_226);
+        send_ans(stats -> cmd_chnl, MSG_226);
 
     // close the file
-    close(data_chnl);
+    close(stats -> data_chnl);
+    stats -> data_chnl = 0;
     fclose(file);
 
     exit(EXIT_SUCCESS);
@@ -247,7 +252,7 @@ void operate(int sd)
     sockaddrlen = sizeof (stats.sau_cmd.u);
     getsockname(sd, (struct sockaddr*)&stats.sau_cmd.u, &sockaddrlen);
 
-    stats.data_chnl = sd;
+    stats.cmd_chnl = sd;
     
     while (1) {
         op[0] = param[0] = '\0';
@@ -312,22 +317,26 @@ void ls(struct conn_stats *stats)
     close(stats -> data_chnl);
     stats -> data_chnl = 0;
 
-    send_ans(cmd_chnl, MSG_226);
+    send_ans(stats -> cmd_chnl, MSG_226);
 }
 
 int pasv(struct conn_stats *stats)
 {
     int a,b,c,d;
-    char ip_addr[AF_INET6] = {'\0'};
+    char ip_addr[INET6_ADDRSTRLEN] = {'\0'};
     int data_chnl, port;
-    socklen_t len = sizeof(addr_stor);
-    struct sockaddr_util *data_sa;
+    struct sockaddr_in *data_sa;
+    struct sockaddr_in *cmd_sa;
+    socklen_t len = 0;
 
     if(!stats) {
         fprintf(stderr, "pasv: cmd_chnl socket not valid");
         return -1;
     }
-    stats = &stats->sau_data.u;
+
+    cmd_sa = &stats -> sau_cmd.u.sa4;
+    data_sa = &stats -> sau_data.u.sa4;
+    len = sizeof(*data_sa);
 
     data_chnl = tcp_listen("0", 1, (struct sockaddr*) data_sa);
     
@@ -337,13 +346,23 @@ int pasv(struct conn_stats *stats)
         return -1;
     }
 
+    printf("lompa: %d\n", cmd_sa -> sin_family);
+    if(!inet_ntop(cmd_sa -> sin_family, &cmd_sa->sin_addr, ip_addr, sizeof ip_addr)){
+        perror("pasv:inet_ntop");
+        return -1;
+    }
+
+    port = ntohs(data_sa->sin_port);
+
     sscanf(ip_addr,"%d.%d.%d.%d", &a, &b, &c, &d);
 
     send_ans(stats -> cmd_chnl, MSG_227, a, b, c, d, port / 256, port % 256);
 
     data_chnl = accept(data_chnl, (struct sockaddr *)&data_sa, &len);
+
+    stats -> data_chnl = data_chnl;
     
-    return data_sd;
+    return data_chnl;
 }
 
 void pwd(int sd) 

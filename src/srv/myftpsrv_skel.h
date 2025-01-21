@@ -54,7 +54,7 @@ int send_pasv_ans(int cmd_chnl_sd, int file_chnl_sd);
  * data_chnl: data channel, if data_chnl is NULL, 
  * proceeds to open a new data channel.
  * */
-int pasv(int cmd_sd);
+int pasv(struct conn_stats *stats);
 
 /* handles peer connection in the main loop
  * ssd: slave socket descriptor
