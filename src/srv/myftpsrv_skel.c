@@ -5,8 +5,10 @@ int main(int argc, char *argv[])
     // reserve sockets and variables space
     struct sockaddr_storage peer_addr, own_addr; // container big enough to support both ipv4 and ipv6
     socklen_t peer_len = sizeof peer_addr;
-    char network_addr[AF_INET6] = {'\0'};
+    char s[INET6_ADDRSTRLEN] = {'\0'};
     int sd = 0, peer_sd = 0, peer_port;
+    struct sockaddr_in6 *in6_addr;
+    struct sockaddr_in *in_addr;
 
     // arguments checking
     if (argc != 2) {
@@ -14,7 +16,7 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    sd = tcp_listen(argv[1], BACKLOG_SIZE, (struct sockaddr *)&own_addr);
+    sd = tcp_listen(argv[1], BACKLOG_SIZE, (struct sockaddr *) &own_addr);
 
     if(sd == -1) exit(EXIT_FAILURE);
 
@@ -29,10 +31,12 @@ int main(int argc, char *argv[])
         }
 
         if(peer_addr.ss_family == AF_INET6) {
-            printf("Peer IP address : %s\n", network_addr);
+            in6_addr = (struct sockaddr_in6*) &peer_addr;
+            inet_ntop(in6_addr.sin6_family, in6_addr.sin6_addr,
+            printf("Peer IP address : %s\n", s);
             printf("Peer port       : %d\n", ntohs(((struct sockaddr_in6*)&peer_addr)->sin6_port));
         } else {
-            printf("Peer IP address : %s\n", network_addr);
+            printf("Peer IP address : %s\n", s);
             printf("Peer port       : %d\n", ntohs(((struct sockaddr_in*)&peer_addr)->sin_port));
         }
 
@@ -129,7 +133,7 @@ int recv_cmd(int sd, char *operation, char *param)
     return 1;
 }
 
-void retr(int cmd_chnl, int data_chnl, char *file_path)
+void retr(struct conn_stats *stats, char *file_path)
 {
     FILE *file;
     int bread;
@@ -277,8 +281,8 @@ void ls(struct conn_stats *stats)
     char buffer[BUFSIZE], c;
     int i = 0;
 
-    if (!cmd_chnl || !data_chnl) {
-        fprintf(stderr, "ls: not valid socket descriptors\n");
+    if (!stats) {
+        fprintf(stderr, "ls: stats not valid\n");
         return;
     }
 
@@ -289,7 +293,7 @@ void ls(struct conn_stats *stats)
         return;
     }
 
-    send_ans(cmd_chnl, MSG_125);
+    send_ans(stats->cmd_chnl, MSG_125);
 
     while((c = fgetc(popen_res)) != EOF) {
         if(c == '\n') {
@@ -297,15 +301,16 @@ void ls(struct conn_stats *stats)
         }
         buffer[i++] = c;
         if(i > BUFSIZE) {
-                write(data_chnl, buffer, BUFSIZE);
+                write(stats->data_chnl, buffer, BUFSIZE);
                 i = 0;
         }
     }
     buffer[i] = EOF;
-    write(data_chnl, buffer, i);
+    write(stats -> data_chnl, buffer, i);
 
-    close(data_chnl);
     pclose(popen_res);
+    close(stats -> data_chnl);
+    stats -> data_chnl = 0;
 
     send_ans(cmd_chnl, MSG_226);
 }
