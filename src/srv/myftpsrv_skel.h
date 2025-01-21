@@ -13,7 +13,6 @@
 #include <limits.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-
 #include "socketmgmt.h"
 
 
