@@ -1,4 +1,3 @@
-
 #include <linux/limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,9 +11,12 @@
 #include <sys/types.h>
 #include <fcntl.h>
 #include <limits.h>
-
 #include <netinet/in.h>
 #include <arpa/inet.h>
+
+#include "socketmgmt.h"
+
+
 
 #define BUFSIZE 512
 #define CMDSIZE 4
@@ -57,10 +59,8 @@ int pasv(int cmd_sd);
 
 /* handles peer connection in the main loop
  * ssd: slave socket descriptor
- *  msd: master socket descriptor
- *  return 
  */
-void handle_connection(int);
+void handle_connection(int sd);
 
 /**
  * function: send answer to the client
@@ -91,7 +91,7 @@ int recv_cmd(int sd, char *operation, char *param);
  * sd: socket descriptor
  * file_path: name of the RETR file
  **/
-void retr(int cmd_chnl, int data_chnl, char *file_path);
+void retr(struct conn_stats *stats, char *file_path);
 
 /**
  * funcion: check valid credentials in ftpusers file
@@ -117,4 +117,4 @@ void operate(int sd);
  * cmd_chnl: command channel
  * data_chnl: data channel
  */
-void ls(int cmd_chnl, int data_chnl);
+void ls(struct conn_stats *stats);

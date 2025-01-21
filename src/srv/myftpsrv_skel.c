@@ -1,16 +1,9 @@
 #include "myftpsrv_skel.h"
-#include "socketmgmt.h"
-#include <arpa/inet.h>
-#include <linux/limits.h>
-#include <stdio.h>
-#include <string.h>
-#include <sys/socket.h>
-#include <unistd.h>
 
 int main(int argc, char *argv[])
 {
     // reserve sockets and variables space
-    struct sockaddr_storage peer_addr; // container big enough to support both ipv4 and ipv6
+    struct sockaddr_storage peer_addr, own_addr; // container big enough to support both ipv4 and ipv6
     socklen_t peer_len = sizeof peer_addr;
     char network_addr[AF_INET6] = {'\0'};
     int sd = 0, peer_sd = 0, peer_port;
@@ -21,7 +14,7 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    sd = tcp_listen(argv[1], BACKLOG_SIZE);
+    sd = tcp_listen(argv[1], BACKLOG_SIZE, (struct sockaddr *)&own_addr);
 
     if(sd == -1) exit(EXIT_FAILURE);
 
@@ -35,13 +28,13 @@ int main(int argc, char *argv[])
             continue;
         }
 
-        if(socketinfo(peer_sd, network_addr, &peer_port, PEER_INFO) == -1) {
-            fprintf(stderr, "Couldn't read info from socket.\n");
-            continue;
+        if(peer_addr.ss_family == AF_INET6) {
+            printf("Peer IP address : %s\n", network_addr);
+            printf("Peer port       : %d\n", ntohs(((struct sockaddr_in6*)&peer_addr)->sin6_port));
+        } else {
+            printf("Peer IP address : %s\n", network_addr);
+            printf("Peer port       : %d\n", ntohs(((struct sockaddr_in*)&peer_addr)->sin_port));
         }
-
-        printf("Peer IP address : %s\n", network_addr);
-        printf("Peer port       : %d\n", peer_port);
 
         handle_connection(peer_sd);
     }
@@ -59,6 +52,7 @@ void handle_connection(int ssd)
     }
 
     if (!fork()) {
+        // conn_stats is now part of the children address space
         send_ans(ssd, MSG_220);
         if (!authenticate(ssd)) {
             close(ssd);
@@ -238,38 +232,46 @@ int authenticate(int sd)
 void operate(int sd)
 {
     char op[CMDSIZE], param[PARSIZE];
-    int data_chnl = 0, result;
+    struct conn_stats stats;
+    socklen_t sockaddrlen = 0;
 
+    if(!sd) {
+        fprintf(stderr,"operate: socket not valid\n");
+        exit(EXIT_FAILURE);
+    }
+
+    sockaddrlen = sizeof (stats.sau_cmd.u);
+    getsockname(sd, (struct sockaddr*)&stats.sau_cmd.u, &sockaddrlen);
+
+    stats.data_chnl = sd;
+    
     while (1) {
         op[0] = param[0] = '\0';
 
         if (!recv_cmd(sd, op, param))
             return;
 
-        if (strcmp(op, "RETR") == 0 && data_chnl) {
-            retr(sd, data_chnl, param);
-            data_chnl = 0;
+        if (strcmp(op, "RETR") == 0) {
+            retr(&stats, param);
         } else if (strcmp(op, "QUIT") == 0) {
             send_ans(sd, MSG_221);
             close(sd);
             exit(EXIT_SUCCESS);
         } else if (strcmp(op, "LIST") == 0) {
-            ls(sd, data_chnl);
-            data_chnl = 0;
+            ls(&stats);
         } else if (strcmp(op, "SYST") == 0) {
             send_ans(sd, MSG_215);
         } else if (strcmp(op, "FEAT") == 0) {
             send_ans(sd, MSG_211);
         } else if (strcmp(op, "PASV") == 0)  { // server listens for a connection on a certain port
-            data_chnl = pasv(sd);
-            result = data_chnl;
+            pasv(&stats);
         } else {
             send_ans(sd, MSG_502);
         }
     }
 }
 
-void ls(int cmd_chnl, int data_chnl) 
+void ls(struct conn_stats *stats) 
 {
     FILE *popen_res = NULL;
     char buffer[BUFSIZE], c;
@@ -308,42 +310,35 @@ void ls(int cmd_chnl, int data_chnl)
     send_ans(cmd_chnl, MSG_226);
 }
 
-int pasv(int cmd_chnl)
+int pasv(struct conn_stats *stats)
 {
     int a,b,c,d;
     char ip_addr[AF_INET6] = {'\0'};
     int data_chnl, port;
-    struct sockaddr_storage addr_stor;
     socklen_t len = sizeof(addr_stor);
+    struct sockaddr_util *data_sa;
 
-    if(!cmd_chnl) {
+    if(!stats) {
         fprintf(stderr, "pasv: cmd_chnl socket not valid");
-        return 0;
-    }
-
-    data_chnl = tcp_listen("0", 1);
-    
-    if(data_chnl == -1) {
-        send_ans(cmd_chnl, MSG_502);
-        fprintf(stderr, "Error while opening sockets\n");
-        return 0;
-    }
-
-    if(socketinfo(cmd_chnl, ip_addr, NULL, CURRENT_INFO) == -1) {
-        fprintf(stderr, "Couldn't get ip address from cmd_chnl\n");
         return -1;
     }
+    stats = &stats->sau_data.u;
 
-    if(socketinfo(data_chnl, NULL, &port, CURRENT_INFO) == -1) {
-        fprintf(stderr, "Couldn't get port from data socket\n");
+    data_chnl = tcp_listen("0", 1, (struct sockaddr*) data_sa);
+    
+    if(data_chnl == -1) {
+        send_ans(stats -> cmd_chnl, MSG_502);
+        fprintf(stderr, "Error while opening sockets\n");
         return -1;
     }
 
     sscanf(ip_addr,"%d.%d.%d.%d", &a, &b, &c, &d);
 
-    send_ans(cmd_chnl, MSG_227, a, b, c, d, port / 256, port % 256);
+    send_ans(stats -> cmd_chnl, MSG_227, a, b, c, d, port / 256, port % 256);
 
-    return accept(data_chnl, (struct sockaddr *)&addr_stor, &len);
+    data_chnl = accept(data_chnl, (struct sockaddr *)&data_sa, &len);
+    
+    return data_sd;
 }
 
 void pwd(int sd) 
