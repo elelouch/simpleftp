@@ -1,7 +1,7 @@
 CC := gcc
 CFLAGS := -Wall -g 
-CFLAGS += -I ../socket
-LDFLAGS := -L../socket
+CFLAGS += -I ../libsocket
+LDFLAGS := -L../libsocket
 LIBS := -lsocketmgmt # this is similar to -lc which translates to libc
 
 TARGET := ftpcli
@@ -13,7 +13,7 @@ ftpcli.o: myftp_skel.c
 
 
 $(TARGET): ftpcli.o
-	$(CC) $(CFLAGS) -o ../../bin/$(TARGET) $^ $(LIBS) $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $(TARGET) $^ $(LIBS) $(LDFLAGS)
 
 clean: 
 	rm -rf $(BINS)

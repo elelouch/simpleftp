@@ -23,26 +23,19 @@ struct sockaddr_util {
  * scope during the function definition.
  * This helps tracking changes.
  */
-struct conn_stats {
-    int cmd_chnl;
-    int data_chnl;
-    int passivemode;
-    struct sockaddr_util sau_cmd;
-    struct sockaddr_util sau_data;
-    int verbose;
-};
+
 /* creates an active tcp socket.
  * stats: domain name of the service. Nullable.
  * port: service port, use "0" for picking a random port. Nullable.
  * returns: socket file descriptor to the service */
-int tcp_connection(const char* name, const char* port, struct sockaddr *addr);
+int tcp_connection(const char* name, const char* port);
 
 /* Creates a passive tcp socket.
  * name: domain name
  * port_str: Optional string that will contain the port that the service is using
  * returns: socket file descriptor of the created service 
  */
-int tcp_listen(char *port, int queue_size, struct sockaddr *addr);
+int tcp_listen(char *port, int queue_size);
 
 int is_ipv6(struct sockaddr_util *sa);
 

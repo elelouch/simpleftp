@@ -1,6 +1,7 @@
 #include "myftp_skel.h"
 #include "socketmgmt.h"
 #include <stdio.h>
+#include <sys/socket.h>
 
 int main(int argc, char *argv[]) 
 {
@@ -9,7 +10,7 @@ int main(int argc, char *argv[])
     struct conn_stats stats;
     // arguments checking
     if(argc <= 2) {
-        fprintf(stderr, "Usage: %s -[OPTIONS]... SERVER_NAME SERVER_PORT\n"
+        fprintf(stderr, "Usage: %s [OPTIONS]... SERVER_NAME SERVER_PORT\n"
                 "\t OPTIONS:\n" 
                 "\t\t -A, enable active mode\n"
                 "\t\t -v, enable verbose mode\n"
@@ -20,7 +21,7 @@ int main(int argc, char *argv[])
     network_address = argv[argc - 2];
     port = argv[argc - 1];
 
-    sd = tcp_connection(network_address, port, (struct sockaddr*) &stats.sau_cmd);
+    sd = tcp_connection(network_address, port);
 
     if(!sd) {
         fprintf(stderr, "main: Couldn't connect to server, name or port might be wrong\n");
@@ -31,7 +32,7 @@ int main(int argc, char *argv[])
     stats.cmd_chnl = sd;
     stats.verbose = 0;
 
-    while((c = getopt(argc, argv, "A:v")) != -1) {
+    while((c = getopt(argc, argv, "Av")) != -1) {
         switch (c) {
         case 'A':
             stats.passivemode = 0;
@@ -75,7 +76,6 @@ int recv_msg(struct conn_stats *stats, char *text)
 
     if (recv_s == 0) {
         close(stats -> cmd_chnl);
-        stats -> cmd_chnl = 0;
         fprintf(stderr, "recv_msg: Connection closed by host\n");
         exit(EXIT_FAILURE);
     }
@@ -275,72 +275,82 @@ void operate(struct conn_stats *stats)
 
 int dataconn(struct conn_stats *stats) 
 {
+    if(stats -> passivemode) {
+        return handle_pasv(stats);
+    }
+    return handle_port(stats);
+}
+
+int handle_pasv(struct conn_stats *stats)
+{
     char buff[BUFSIZE] = {'\0'},
          ip_addr[INET6_ADDRSTRLEN] = {'\0'},
          port_str[PORTLEN] = {'\0'};
-    int data_sd;
-    int port, code_received, af = 0;
-    struct sockaddr_util *cmd_sa = NULL, *data_sa = NULL;
-    socklen_t cmd_sa_size = 0, data_sa_size = 0;
+    struct sockaddr_in sa4;
+    socklen_t len = sizeof sa4;
 
-    // error checking
     if(!stats || !stats -> cmd_chnl) {
         fprintf(stderr, "dataconn: invalid arguments (stats)\n");
         exit(EXIT_FAILURE);
     }
-    
-    cmd_sa = &stats -> sau_cmd;
-    data_sa = &stats -> sau_data;
 
-    cmd_sa_size = sizeof(*cmd_sa);
-    data_sa_size = sizeof(*data_sa);
-
-    af = cmd_sa -> u.sa.sa_family;
-
-    if(!inet_ntop(af, &cmd_sa->u.sa4.sin_addr, ip_addr, cmd_sa_size)){
+    if(getsockname(stats -> cmd_chnl, (struct sockaddr*)&sa4, &len) == -1){
+        perror("getsockname");
+        return -1;
+    }
+        
+    if(!inet_ntop(sa4.sin_family, &sa4.sin_addr, ip_addr, sizeof ip_addr)){
         perror("dataconn:inet_ntop");
         return -1;
     }
 
-    if(stats -> passivemode) {
-        send_msg(stats -> cmd_chnl, "PASV", NULL);
+    send_msg(stats -> cmd_chnl, "PASV", NULL);
 
-        if (recv_msg(stats, buff) != ENTERING_PASV_MODE_CODE) {
-            fprintf(stderr, "dataconn: Abnormal flow\n");
-            return -1;
-        }
-
-        sprintf(port_str, "%d", port_from_pasvres(buff));
-
-        data_sd = tcp_connection(ip_addr, port_str, (struct sockaddr*) cmd_sa);
-        stats -> data_chnl = data_sd;
-
-        return data_sd;
+    if (recv_msg(stats, buff) != ENTERING_PASV_MODE_CODE) {
+        fprintf(stderr, "dataconn: Abnormal flow\n");
+        return -1;
     }
-    
-    data_sd = tcp_listen("0", 1, (struct sockaddr*) data_sa);
+
+    sprintf(port_str, "%d", port_from_pasvres(buff));
+
+    return tcp_connection(ip_addr, port_str);
+}
+
+int handle_port(struct conn_stats *stats)
+{
+    char buff[BUFSIZE] = {'\0'}, ip_addr[INET6_ADDRSTRLEN] = {'\0'};
+    struct sockaddr_in sa4;
+    socklen_t len = sizeof sa4;
+    int data_sd = 0, port = 0;
+
+    if(!stats || !stats -> cmd_chnl) {
+        fprintf(stderr, "dataconn: invalid arguments (stats)\n");
+        exit(EXIT_FAILURE);
+    }
+
+    data_sd = tcp_listen("0", 1);
 
     if(!data_sd) {
         fprintf(stderr, "dataconn: couldn't listen to tcp socket\n");
         return -1;
     }
 
-    port = ntohs(data_sa -> u.sa4.sin_port);
+    if(getsockname(data_sd, (struct sockaddr *) &sa4, &len)) {
+        perror("getsockname");
+        return -1;
+    };
+
+    port = ntohs(sa4.sin_port);
 
     send_msg(stats -> cmd_chnl, "PORT", generate_port_res(port, ip_addr, buff));
-                                                            
-    code_received = recv_msg(stats, NULL); 
 
-    if(code_received / 100 != 2) {
+    if(recv_msg(stats, NULL) / 100 != 2) {
         fprintf(stderr, "dataconn: OK code not received after PORT command\n");
         close(data_sd);
         return -1;
     }
 
-    data_sd = accept(data_sd, (struct sockaddr*)data_sa, &data_sa_size); // blocks while waiting for server connection
-    stats -> data_chnl = data_sd;
-
-    return data_sd;
+    return accept(data_sd, (struct sockaddr *) &sa4, &len);
 }
 
 char *generate_port_res(int port, char *ip_addr, char *dst)

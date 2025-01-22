@@ -1,18 +1,16 @@
 CC := gcc
 CFLAGS :=-Wall -g
-CFLAGS += -I../socket
+CFLAGS += -I../libsocket
 LIBS := -lsocketmgmt
-LDFLAGS := -L../socket
+LDFLAGS := -L../libsocket
 BINS := ftpsrv.o ftpsrv
-
-BIN_DIR := $(BIN_DIR)
 
 
 ftpsrv.o: myftpsrv_skel.c 
 	$(CC) $(CFLAGS) -c $^ -o $@
 
 ftpsrv: ftpsrv.o
-	$(CC) $(CFLAGS) -o ../../bin/$@ $^ $(LIBS) $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LIBS) $(LDFLAGS)
 
 all: $(BINS)
 

@@ -44,6 +44,15 @@
 #define PROMPT "ftp> "
 
 
+struct conn_stats {
+    int cmd_chnl;
+    int passivemode;
+    int verbose;
+};
+
+int handle_pasv(struct conn_stats * stats);
+
+int handle_port(struct conn_stats *stats);
 
 /* Sends CWD to the server.
  * dirname: directory to change

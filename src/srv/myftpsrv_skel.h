@@ -41,6 +41,13 @@
 #define MSG_530 "530 Login incorrect\r\n"
 #define MSG_550 "550 %s: no such file or directory\r\n"
 
+struct sess_stats {
+    int cmd_chnl;
+    int data_chnl;
+    struct sockaddr_util cmd_sau;
+    char *root_dir;
+};
+
 /* executes retr concurrently using sd as file destination
  */
 /* builds the pasv response using the opened sd
@@ -54,7 +61,7 @@ int send_pasv_ans(int cmd_chnl_sd, int file_chnl_sd);
  * data_chnl: data channel, if data_chnl is NULL, 
  * proceeds to open a new data channel.
  * */
-int pasv(struct conn_stats *stats);
+int pasv(struct sess_stats *stats);
 
 /* handles peer connection in the main loop
  * ssd: slave socket descriptor
@@ -90,7 +97,7 @@ int recv_cmd(int sd, char *operation, char *param);
  * sd: socket descriptor
  * file_path: name of the RETR file
  **/
-void retr(struct conn_stats *stats, char *file_path);
+void retr(struct sess_stats *stats, char *file_path);
 
 /**
  * funcion: check valid credentials in ftpusers file
@@ -116,4 +123,4 @@ void operate(int sd);
  * cmd_chnl: command channel
  * data_chnl: data channel
  */
-void ls(struct conn_stats *stats);
+void ls(struct sess_stats *stats);

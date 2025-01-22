@@ -8,7 +8,7 @@
 #include <string.h>
 #include <arpa/inet.h>
 
-int tcp_listen(char *port, int queue_size, struct sockaddr *sas) 
+int tcp_listen(char *port, int queue_size) 
 {
     struct addrinfo hints;
     struct addrinfo *results = NULL, *rp = NULL;
@@ -18,7 +18,7 @@ int tcp_listen(char *port, int queue_size, struct sockaddr *sas)
 
     hints.ai_family = AF_INET; // just IPV4
     hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_PASSIVE;
+    hints.ai_flags = AI_PASSIVE | AI_NUMERICSERV; // listen | receive numeric services
     hints.ai_protocol = 0; // any protocol
     hints.ai_addr = NULL;
     hints.ai_next = NULL;
@@ -39,10 +39,8 @@ int tcp_listen(char *port, int queue_size, struct sockaddr *sas)
             continue;
         }
 
-        if(bind(sd, rp->ai_addr, rp->ai_addrlen) != -1) {
-            memcpy(sas, rp -> ai_addr, rp -> ai_addrlen);
+        if(bind(sd, rp->ai_addr, rp->ai_addrlen) != -1) 
             break;
-        }
 
         perror("bind");
         close(sd);
@@ -64,7 +62,7 @@ int tcp_listen(char *port, int queue_size, struct sockaddr *sas)
     return sd;
 }
 
-int tcp_connection (const char* name, const char* port, struct sockaddr *addr) 
+int tcp_connection(const char* name, const char* port) 
 {
     struct addrinfo hints;
     struct addrinfo *results = NULL, *rp = NULL;
@@ -93,7 +91,6 @@ int tcp_connection (const char* name, const char* port, struct sockaddr *addr)
         }
 
         if(connect(sd, rp->ai_addr, rp->ai_addrlen) != -1) {
-            memcpy(addr, rp -> ai_addr, rp -> ai_addrlen);
             break;
         }
 
@@ -102,6 +99,7 @@ int tcp_connection (const char* name, const char* port, struct sockaddr *addr)
     }
 
     freeaddrinfo(results);
+
     return sd;
 }
 
