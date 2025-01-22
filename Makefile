@@ -9,7 +9,7 @@ BIN_DIR := ./bin
 all: $(BIN_DIR) socketlib cli srv 
 
 $(BIN_DIR):
-	mkdir -p $(BIN_DIR)
+	mkdir -p $(BIN_DIR)/files
 
 socketlib:
 	$(MAKE) -C src/socket static
