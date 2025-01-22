@@ -2,7 +2,26 @@ CC=gcc
 CFLAGS=-Wall
 dir_guard := @mkdir -p ./bin
 
-default: 
-	$(dir_guard)
-	$(CC) $(CFLAGS) ./src/cli/myftp_skel.c -o ./bin/ftpcli
-	$(CC) $(CFLAGS) ./src/srv/myftpsrv_skel.c -o ./bin/ftpsrv
+BIN_DIR := ./bin
+
+.PHONY: clean all 
+
+all: $(BIN_DIR) socketlib cli srv 
+
+$(BIN_DIR):
+	mkdir -p $(BIN_DIR)
+
+socketlib:
+	$(MAKE) -C src/socket static
+
+cli:
+	$(MAKE) -C src/cli all
+
+srv:
+	$(MAKE) -C src/srv all
+
+clean: 
+	$(MAKE) -C src/socket clean
+	$(MAKE) -C src/cli clean
+	$(MAKE) -C src/srv clean
+	rm -rf $(BIN_DIR)
