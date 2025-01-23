@@ -26,7 +26,7 @@ Use the following command inside the repository.
 make
 ```
 
-Now, each directory from the source code should have it's respective binary (example for the client: src/cli/ftpcli).
+Now, each directory from the source code should have it's respective binary (client example: src/cli/ftpcli).
 For details on the usage, use the -h flag on the binary.
 ```
 ftpsrv -h
