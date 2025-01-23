@@ -33,7 +33,7 @@ ftpsrv -h
 ftpcli -h
 ```
 
-If feeling like cleaning the binaries, for example, for testing purposes. Use clean.
+If feeling like cleaning the binaries, for example, testing purposes. Use clean.
 ```
 make clean
 ```
