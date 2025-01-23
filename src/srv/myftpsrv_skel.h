@@ -21,6 +21,7 @@
 #define BACKLOG_SIZE 10
 #define PORTLEN 5 + 1 // (2^16 = 65536, 5 caracteres maximo) + '\0'
 
+#define USAGE_MSG 
 #define MSG_150 "Opening BINARY mode data connection for %s (%d bytes).\r\n"
 #define MSG_125 "125 Data connection open, starting transfer\r\n"
 #define MSG_200 "200 %s Command OK\r\n"
@@ -36,24 +37,20 @@
 #define MSG_257 "257 \"%s\" is the current directory\r\n"
 #define MSG_299 "299 File %s size %ld bytes\r\n"
 #define MSG_331 "331 Password required for %s\r\n"
+#define MSG_451 "451 Request action aborted. Local error processing.\r\n"
 #define MSG_501 "501 Syntax errors in parameters or arguments\r\n"
 #define MSG_502 "502 Command not implemented\r\n"
 #define MSG_530 "530 Login incorrect\r\n"
 #define MSG_550 "550 %s: no such file or directory\r\n"
+
+char usage_msg[] = "Usage: %s LISTEN_PORT\n\n"
+                    "Commands supported: RETR, CWD, STOR, PASV, PORT, LIST, QUIT\n";
 
 struct sess_stats {
     int cmd_chnl;
     int data_chnl;
     struct sockaddr_util cmd_sau;
 };
-
-/* executes retr concurrently using sd as file destination
- */
-/* builds the pasv response using the opened sd
- * return: -1 on error
- *          0 on success
- */
-int send_pasv_ans(int cmd_chnl_sd, int file_chnl_sd); 
 
 /* Client asks to the server to listen to certain port
  * sd: cmd, command channel
@@ -127,3 +124,5 @@ void ls(struct sess_stats *stats);
 void cd(struct sess_stats *stats, char *dir);
 
 int handle_port(struct sess_stats *stats, char *param);
+
+void store(struct sess_stats *stats, char *filename);

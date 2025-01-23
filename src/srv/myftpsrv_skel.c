@@ -1,4 +1,5 @@
 #include "myftpsrv_skel.h"
+#include <bits/getopt_core.h>
 #include <netinet/in.h>
 #include <stdio.h>
 #include <sys/socket.h>
@@ -13,18 +14,33 @@ int main(int argc, char *argv[])
     int sd = 0, peer_sd = 0;
     struct sockaddr_in6 *in6_addr;
     struct sockaddr_in *in_addr;
+    char *service = argv[1];
+    char c;
 
     // arguments checking
     if (argc != 2) {
+        fprintf(stderr, usage_msg, argv[0]);
+        exit(EXIT_FAILURE);
+    }
+
+    sd = tcp_listen(service, BACKLOG_SIZE);
+
+    while((c = getopt(argc,argv, "h:")) != -1) {
+        switch(c){
+        case 'h':
+            printf(usage_msg, argv[0]);
+            break;
+        default:
+            printf("Unknown option\n");
+        }
+    }
+
+    if(sd == -1) {
         fprintf(stderr, "Usage: %s LISTEN_PORT\n", argv[0]);
         exit(EXIT_FAILURE);
     }
 
-    sd = tcp_listen(argv[1], BACKLOG_SIZE);
-
-    if(sd == -1) exit(EXIT_FAILURE);
-
-    printf("Listening...\n");
+    printf("Service started. Listening on %s...\n", service);
 
     while (1) {
         peer_sd = accept(sd, (struct sockaddr *)&peer_addr, &peer_len);
@@ -286,6 +302,8 @@ void operate(int sd)
             handle_port(&stats, param);
         } else if (strncmp(op, "CWD", 3) == 0) {
             cd(&stats, param);
+        } else if (strncmp(op, "STOR", 4) == 0) {
+            store(&stats, param);
         } else {
             send_ans(sd, MSG_502);
         }
@@ -457,4 +475,35 @@ void cd(struct sess_stats *stats, char *dir)
         return;
     }
     send_ans(stats -> cmd_chnl, MSG_250);
+}
+
+void store(struct sess_stats *stats, char *filename)
+{
+    char buffer[BUFSIZE];
+    FILE *new_file = NULL;
+    int bread = 0;
+
+    new_file = fopen(filename, "w");
+
+    if(!new_file) {
+        send_ans(stats -> cmd_chnl, MSG_501);
+        return;
+    }
+
+    send_ans(stats -> cmd_chnl, MSG_125);
+
+    while((bread = read(stats -> data_chnl, buffer, BUFSIZE)) > 0){
+        fwrite(buffer, sizeof(char), bread, new_file); 
+    }
+    
+    close(stats -> data_chnl);
+    stats -> data_chnl = 0;
+
+    if(bread == -1) {
+        send_ans(stats -> cmd_chnl, MSG_451);
+        return;
+    }
+
+    send_ans(stats -> cmd_chnl, MSG_226);
+
 }

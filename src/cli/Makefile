@@ -4,18 +4,16 @@ CFLAGS += -I ../libsocket
 LDFLAGS := -L../libsocket
 LIBS := -lsocketmgmt # this is similar to -lc which translates to libc
 
-TARGET := ftpcli
-
-BINS := ftpcli.o $(TARGET)
+TARGETS := ftpcli ftpcli.o
 
 ftpcli.o: myftp_skel.c 
 	$(CC) $(CFLAGS) -c $^ -o $@
 
 
-$(TARGET): ftpcli.o
-	$(CC) $(CFLAGS) -o $(TARGET) $^ $(LIBS) $(LDFLAGS)
+ftpcli: ftpcli.o
+	$(CC) $(CFLAGS) -o $@ $^ $(LIBS) $(LDFLAGS)
 
 clean: 
-	rm -rf $(BINS)
+	rm -rf $(TARGETS)
 
-all: $(BINS)
+all: $(TARGETS)

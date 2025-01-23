@@ -43,6 +43,13 @@
 
 #define PROMPT "ftp> "
 
+char usage_msg[] = "Usage: %s [OPTIONS]... SERVER_NAME SERVER_PORT\n"
+                    "\t OPTIONS:\n" 
+                    "\t\t -A, enable active mode\n"
+                    "\t\t -v, enable verbose mode\n"
+                    "\t\t -h, print this help menu\n"
+                    "\n\t example: %s -Av localhost 21\n\n"
+                    "Commands implemented: ls, put, get, cd, pwd\n";
 
 struct conn_stats {
     int cmd_chnl;

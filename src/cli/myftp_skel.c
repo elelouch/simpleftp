@@ -11,11 +11,7 @@ int main(int argc, char *argv[])
     struct conn_stats stats;
     // arguments checking
     if(argc <= 2) {
-        fprintf(stderr, "Usage: %s [OPTIONS]... SERVER_NAME SERVER_PORT\n"
-                "\t OPTIONS:\n" 
-                "\t\t -A, enable active mode\n"
-                "\t\t -v, enable verbose mode\n"
-                "\n\t example: %s -Av localhost 21 \n", argv[0], argv[0]);
+        fprintf(stderr, usage_msg, argv[0], argv[0]);
         exit(EXIT_FAILURE);
     }
 
@@ -25,7 +21,7 @@ int main(int argc, char *argv[])
     sd = tcp_connection(network_address, port);
 
     if(!sd) {
-        fprintf(stderr, "main: Couldn't connect to server, name or port might be wrong\n");
+        fprintf(stderr, usage_msg, argv[0]);
         exit(EXIT_FAILURE);
     }
 
@@ -33,7 +29,7 @@ int main(int argc, char *argv[])
     stats.cmd_chnl = sd;
     stats.verbose = 0;
 
-    while((c = getopt(argc, argv, "Av")) != -1) {
+    while((c = getopt(argc, argv, "Avh:")) != -1) {
         switch (c) {
         case 'A':
             stats.passivemode = 0;
@@ -41,6 +37,10 @@ int main(int argc, char *argv[])
         case 'v':
             stats.verbose = 1;
             break;
+        case 'h':
+            printf(usage_msg, argv[0], argv[0]);
+        default:
+            printf("Unknown option\n");
         }
     }
 
@@ -259,7 +259,7 @@ void operate(struct conn_stats *stats)
             break;
         } else if (strcmp(op, "ls") == 0) {
             ls(stats);
-        } else if (strcmp(op, "store") == 0) {
+        } else if (strcmp(op, "put") == 0) {
             store(param, stats);
         } else if (strcmp(op, "cd") == 0) {
             cd(param, stats);
