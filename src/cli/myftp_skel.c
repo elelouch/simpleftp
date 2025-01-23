@@ -1,5 +1,6 @@
 #include "myftp_skel.h"
 #include "socketmgmt.h"
+#include <arpa/inet.h>
 #include <stdio.h>
 #include <sys/socket.h>
 
@@ -319,8 +320,8 @@ int handle_pasv(struct conn_stats *stats)
 int handle_port(struct conn_stats *stats)
 {
     char buff[BUFSIZE] = {'\0'}, ip_addr[INET6_ADDRSTRLEN] = {'\0'};
-    struct sockaddr_in sa4;
-    socklen_t len = sizeof sa4;
+    struct sockaddr_in sa4, cmd_sa4;
+    socklen_t len = sizeof sa4, cmd_sa_len = sizeof cmd_sa4;
     int data_sd = 0, port = 0;
 
     if(!stats || !stats -> cmd_chnl) {
@@ -335,16 +336,27 @@ int handle_port(struct conn_stats *stats)
         return -1;
     }
 
-    if(getsockname(data_sd, (struct sockaddr *) &sa4, &len)) {
+    if(getsockname(data_sd, (struct sockaddr *) &sa4, &len) == -1) {
         perror("getsockname");
         return -1;
     };
+
+
+    if(getsockname(stats ->cmd_chnl, (struct sockaddr *) &cmd_sa4, &cmd_sa_len) == -1) {
+        perror("getsockname");
+        return -1;
+    };
+
+    if(!inet_ntop(cmd_sa4.sin_family, &cmd_sa4.sin_addr, ip_addr, sizeof ip_addr)){
+        perror("inet_ntop");
+        return -1;
+    }
 
     port = ntohs(sa4.sin_port);
 
     send_msg(stats -> cmd_chnl, "PORT", generate_port_res(port, ip_addr, buff));
 
-    if(recv_msg(stats, NULL) / 100 != 2) {
+    if(recv_msg(stats, NULL) / 200 != 2) {
         fprintf(stderr, "dataconn: OK code not received after PORT command\n");
         close(data_sd);
         return -1;

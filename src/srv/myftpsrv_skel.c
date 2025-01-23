@@ -110,6 +110,7 @@ int recv_cmd(int sd, char *operation, char *param)
 
     if (recv_s == 0) {
         printf("Host performed an orderly shutdown\n");
+        close(sd);
         exit(EXIT_FAILURE);
     }
 
@@ -255,15 +256,11 @@ void operate(int sd)
     }
 
     stats.cmd_chnl = sd;
-    stats.root_dir = "./files";
-
 
     if(getsockname(sd, (struct sockaddr*) &stats.cmd_sau, &len) == -1) {
         perror("getsockname");
         exit(EXIT_FAILURE);
     }
-    
-    chdir(stats.root_dir);
 
     while (1) {
         op[0] = param[0] = '\0';
@@ -271,26 +268,83 @@ void operate(int sd)
         if (!recv_cmd(sd, op, param))
             return;
 
-        if (strcmp(op, "RETR") == 0) {
+        if (strncmp(op, "RETR", 4) == 0) {
             retr(&stats, param);
-        } else if (strcmp(op, "QUIT") == 0) {
+        } else if (strncmp(op, "QUIT", 4) == 0) {
             send_ans(sd, MSG_221);
             close(sd);
             exit(EXIT_SUCCESS);
-        } else if (strcmp(op, "LIST") == 0) {
+        } else if (strncmp(op, "LIST", 4) == 0) {
             ls(&stats);
-        } else if (strcmp(op, "SYST") == 0) {
+        } else if (strncmp(op, "SYST", 4) == 0) {
             send_ans(sd, MSG_215);
-        } else if (strcmp(op, "FEAT") == 0) {
+        } else if (strncmp(op, "FEAT", 4) == 0) {
             send_ans(sd, MSG_211);
-        } else if (strcmp(op, "PASV") == 0)  { // server listens for a connection on a certain port
-            pasv(&stats);
-        } else if (strcmp(op, "CWD") == 0) {
-            cd(&stats);
+        } else if (strncmp(op, "PASV", 4) == 0)  { 
+            handle_pasv(&stats);
+        } else if (strncmp(op, "PORT", 4) == 0) {
+            handle_port(&stats, param);
+        } else if (strncmp(op, "CWD", 3) == 0) {
+            cd(&stats, param);
         } else {
             send_ans(sd, MSG_502);
         }
     }
+}
+
+int parse_port_res(char *param, char *host, char *port)
+{
+    int a,b,c,d,e,f, port_num;
+
+    a = b = c = d = e = 0;
+
+    if(sscanf(param, "%d,%d,%d,%d,%d,%d", &a,&b,&c,&d,&e,&f) != 6) {
+        fprintf(stderr, "Couldn't parse correctly the PORT request");
+        return -1;
+    }
+
+    sprintf(host, "%d.%d.%d.%d",a, b, c, d);
+
+    port_num = e * 256 + f;
+
+    if(port_num <= 0) {
+        fprintf(stderr, "Couldn't parse correctly the PORT request");
+        return -1;
+    }
+
+    sprintf(port, "%d", port_num);
+
+    return 0;
+}
+
+
+int handle_port(struct sess_stats* stats, char *param) 
+{
+    char host[INET_ADDRSTRLEN] = {'\0'};
+    char port_str[PORTLEN] = {'\0'};
+    int data_sd = 0;
+
+    if(!stats){
+        fprintf(stderr, "port: invalid arguments");
+        exit(EXIT_FAILURE);
+    }
+
+    if(parse_port_res(param, host, port_str) == -1) {
+        send_ans(stats -> cmd_chnl, MSG_501);
+        return -1;
+    }
+    data_sd = tcp_connection(host, port_str);
+
+    if(data_sd == -1) {
+        fprintf(stderr, "Couldn't connect to ip/port given\n");
+        send_ans(stats -> cmd_chnl, MSG_501);
+        return -1;
+    }
+
+    send_ans(stats -> cmd_chnl, MSG_200, "PORT");
+
+    return stats -> data_chnl = data_sd;
+    
 }
 
 void ls(struct sess_stats *stats) 
@@ -333,7 +387,7 @@ void ls(struct sess_stats *stats)
     send_ans(stats -> cmd_chnl, MSG_226);
 }
 
-int pasv(struct sess_stats *stats)
+int handle_pasv(struct sess_stats *stats)
 {
     int a,b,c,d;
     char ip_addr[INET6_ADDRSTRLEN] = {'\0'};
@@ -393,4 +447,14 @@ void pwd(int sd)
         return;
     }
     send_ans(sd, MSG_550, buffer);
+}
+
+void cd(struct sess_stats *stats, char *dir)
+{
+    if(chdir(dir) == -1) {
+        perror("chdir");
+        send_ans(stats ->cmd_chnl, MSG_550, dir);
+        return;
+    }
+    send_ans(stats -> cmd_chnl, MSG_250);
 }

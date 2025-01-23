@@ -6,7 +6,6 @@
 
 #define PEER_INFO 1
 #define CURRENT_INFO 0
-#define PORTLEN 6
 
 
 struct sockaddr_util {

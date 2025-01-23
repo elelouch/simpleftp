@@ -15,22 +15,22 @@
 #include <arpa/inet.h>
 #include "socketmgmt.h"
 
-
-
 #define BUFSIZE 512
 #define CMDSIZE 4
 #define PARSIZE 100
 #define BACKLOG_SIZE 10
-#define PORT_MAX_LEN 5 + 1 // (2^16 = 65536, 5 caracteres maximo) + '\0'
+#define PORTLEN 5 + 1 // (2^16 = 65536, 5 caracteres maximo) + '\0'
 
 #define MSG_150 "Opening BINARY mode data connection for %s (%d bytes).\r\n"
 #define MSG_125 "125 Data connection open, starting transfer\r\n"
+#define MSG_200 "200 %s Command OK\r\n"
 #define MSG_211 "211 - RETR <path>: retrieve a file\r\n"
 #define MSG_215 "215 UNIX Type\r\n"
 #define MSG_220 "220 srvFtp version 1.0\r\n"
 #define MSG_230 "230 User %s logged in\r\n"
 #define MSG_221 "221 Goodbye\r\n"
 #define MSG_226 "226 Transfer complete\r\n"
+#define MSG_250 "250 Directory successfully changed\r\n"
 #define MSG_227 "227 Entering Passive Mode (%d,%d,%d,%d,%d,%d)\r\n"
 #define MSG_229 "229 Entering Extended Passive Mode (|||%s|)\r\n"
 #define MSG_257 "257 \"%s\" is the current directory\r\n"
@@ -45,7 +45,6 @@ struct sess_stats {
     int cmd_chnl;
     int data_chnl;
     struct sockaddr_util cmd_sau;
-    char *root_dir;
 };
 
 /* executes retr concurrently using sd as file destination
@@ -61,7 +60,7 @@ int send_pasv_ans(int cmd_chnl_sd, int file_chnl_sd);
  * data_chnl: data channel, if data_chnl is NULL, 
  * proceeds to open a new data channel.
  * */
-int pasv(struct sess_stats *stats);
+int handle_pasv(struct sess_stats *stats);
 
 /* handles peer connection in the main loop
  * ssd: slave socket descriptor
@@ -124,3 +123,7 @@ void operate(int sd);
  * data_chnl: data channel
  */
 void ls(struct sess_stats *stats);
+
+void cd(struct sess_stats *stats, char *dir);
+
+int handle_port(struct sess_stats *stats, char *param);
