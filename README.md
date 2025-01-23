@@ -15,11 +15,10 @@ src --- cli
      |
       - libsocket
 
-cli: Source code for the client.
-srv: Source code for the server.
-libsocket: Static library shared by both server and client.
-
 ```
+- cli: Source code for the client.
+- srv: Source code for the server.
+- libsocket: Static library shared by both server and client.
 
 ## How to compile the code
 Use the following command inside the repository.
