@@ -1,6 +1,7 @@
 #include "myftp_skel.h"
 #include "socketmgmt.h"
 #include <arpa/inet.h>
+#include <cstdlib>
 #include <stdio.h>
 #include <sys/socket.h>
 
@@ -15,6 +16,25 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
+    stats.passivemode = 1;
+    stats.verbose = 0;
+
+    while((c = getopt(argc, argv, "Avh")) != -1) {
+        switch (c) {
+        case 'A':
+            stats.passivemode = 0;
+            break;
+        case 'v':
+            stats.verbose = 1;
+            break;
+        case 'h':
+            printf(usage_msg, argv[0], argv[0]);
+            exit(EXIT_SUCCESS);
+        default:
+            printf("Unknown option\n");
+        }
+    }
+
     network_address = argv[argc - 2];
     port = argv[argc - 1];
 
@@ -25,24 +45,7 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    stats.passivemode = 1;
     stats.cmd_chnl = sd;
-    stats.verbose = 0;
-
-    while((c = getopt(argc, argv, "Avh:")) != -1) {
-        switch (c) {
-        case 'A':
-            stats.passivemode = 0;
-            break;
-        case 'v':
-            stats.verbose = 1;
-            break;
-        case 'h':
-            printf(usage_msg, argv[0], argv[0]);
-        default:
-            printf("Unknown option\n");
-        }
-    }
 
     // if receive hello proceed with authenticate and operate if not warning
     if(recv_msg(&stats, NULL) != HELLO_CODE) {

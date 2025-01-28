@@ -57,7 +57,6 @@ int main(int argc, char *argv[])
             printf("Peer IP address : %s\n", s);
             printf("Peer port       : %d\n", ntohs(in6_addr->sin6_port));
         } else {
-            printf("Peer IP address : %s\n", s);
             in_addr = (struct sockaddr_in*) &peer_addr;
             inet_ntop(in_addr->sin_family, &in_addr -> sin_addr, s, sizeof s);
             printf("Peer IP address : %s\n", s);
