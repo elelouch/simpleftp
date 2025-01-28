@@ -27,7 +27,8 @@ make
 ```
 
 Now, each directory from the source code should have it's respective binary (client example: src/cli/ftpcli).
-For details on the usage, use the -h flag on the binary.
+
+*For details on the usage it is recommended to use the -h flag on the compiled binary.*
 ```
 ftpsrv -h
 ftpcli -h

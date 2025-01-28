@@ -167,14 +167,14 @@ int authenticate(struct conn_stats *stats)
 }
 
 
-void get(char *file_name, struct conn_stats *stats) 
+void get(char *filename, struct conn_stats *stats) 
 {
     char buffer[BUFSIZE];
     int cmd_sd, data_sd, code_received, bread, f_size;
     FILE *write_file;
 
-    if(!file_name) {
-        fprintf(stderr, "get: invalid argument (file_name)");
+    if(!filename) {
+        fprintf(stderr, "get: invalid argument (filename)");
         exit(EXIT_FAILURE);
     }
 
@@ -192,7 +192,7 @@ void get(char *file_name, struct conn_stats *stats)
         return;
     }
     // send the RETR command to the server
-    send_msg(cmd_sd, "RETR", file_name);
+    send_msg(cmd_sd, "RETR", filename);
     
     // check for the response
     code_received = recv_msg(stats, buffer);
@@ -207,7 +207,13 @@ void get(char *file_name, struct conn_stats *stats)
         sscanf(buffer, "File %*s size %d bytes", &f_size);
     }
 
-    write_file = fopen(file_name, "w");
+    write_file = fopen(filename, "w");
+
+    if(!write_file) {
+        fprintf(stderr, "Couldn't open file %s. for writing\n", filename);
+        close(data_sd);
+        return;
+    }
 
     while ((bread = read(data_sd, buffer, BUFSIZE)) > 0) {
         fwrite(buffer, bread, sizeof(char), write_file);
@@ -217,10 +223,18 @@ void get(char *file_name, struct conn_stats *stats)
     close(data_sd);
     fclose(write_file);
 
+    if(bread == -1) {
+        send_msg(cmd_sd, MSG_451, NULL);
+        return;
+    }
+
     // receive the OK from the server
     if(recv_msg(stats, NULL) != TRANSFER_COMPLETE_CODE) {
         fprintf(stderr, "get: Transfer complete code not received\n");
-    }
+        return;
+    } 
+
+    printf("File: %s. received\n", filename);
 }
 
 void quit(struct conn_stats *stats) 
@@ -412,6 +426,8 @@ void ls(struct conn_stats *stats)
 
     if(recv_msg(stats, buffer) / 100 != 1) {
         fprintf(stderr, "file action code not received\n");
+        close(data_sd);
+        return;
     }
 
     while((bread = read(data_sd, buffer, BUFSIZE)) > 0) {
@@ -445,50 +461,72 @@ void cd(char *dirname, struct conn_stats *stats)
     code_received = recv_msg(stats, NULL);
 
     if (code_received != DIRECTORY_CHANGED_OK_CODE) {
-        fprintf(stderr, "Directory was not changed successfully. "
+        fprintf(stderr, "Directory was not changed, name might be wrong."
                 "Ok code not received\n");
     }
 }
 
 void store(char *filename, struct conn_stats *stats) 
 {
-    int data_sd = 0;
+    int data_sd = 0, cmd_sd = 0;
     FILE *send_file = NULL;
     char buffer[BUFSIZE] = {'\0'};
-    int bytes_read = 0;
+    int bread = 0;
 
     if (!filename) {
-        fprintf(stderr, "store: invalid argument (filename)\n");
+        fprintf(stderr, "put: invalid argument (filename)\n");
         return;
     }
 
     if (!stats || !stats -> cmd_chnl) {
-        fprintf(stderr, "store: invalid argument (stats)\n");
+        fprintf(stderr, "put: invalid argument (stats)\n");
         return;
     }
+
+    cmd_sd = stats -> cmd_chnl;
 
     data_sd = dataconn(stats);
 
     if(data_sd == -1) {
-        fprintf(stderr, "can't connect data channel\n");
+        fprintf(stderr, "Can't connect data channel\n");
         return;
     }
 
     send_file = fopen(filename, "r");
 
-    send_msg(stats -> cmd_chnl, "STOR", filename);
+    if(!send_file) {
+        close(data_sd);
+        fprintf(stderr, "Couldn't %s open file for reading\n", filename);
+        return;
+    }
 
-    recv_msg(stats, buffer);
+    send_msg(cmd_sd, "STOR", filename);
 
-    while((bytes_read = fread(buffer, sizeof(char), BUFSIZE, send_file)) > 0) {
+    if(recv_msg(stats, buffer)/100 != 1) {
+        fprintf(stderr, "Couldn't send data. %s\n", buffer); 
+        close(data_sd);
+        return;
+    }
+
+    while((bread = fread(buffer, sizeof(char), BUFSIZE, send_file)) > 0) {
         write(data_sd, buffer, BUFSIZE);
     }
 
     close(data_sd);
+    fclose(send_file);
+
+    if(bread == -1) {
+        fprintf(stderr, "get: transfer complete code not received\n");
+        send_msg(cmd_sd, MSG_451, NULL);
+        return;
+    }
+
 
     if(recv_msg(stats, NULL) != TRANSFER_COMPLETE_CODE) {
         fprintf(stderr, "get: transfer complete code not received\n");
     }
+
+    printf("File %s. transferred\n", filename);
 }
  
 void pwd(struct conn_stats *stats) 

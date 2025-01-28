@@ -23,17 +23,18 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    sd = tcp_listen(service, BACKLOG_SIZE);
-
-    while((c = getopt(argc,argv, "h:")) != -1) {
+    while((c = getopt(argc,argv, "h")) != -1) {
         switch(c){
         case 'h':
             printf(usage_msg, argv[0]);
+            exit(EXIT_SUCCESS);
             break;
         default:
             printf("Unknown option\n");
         }
     }
+
+    sd = tcp_listen(service, BACKLOG_SIZE);
 
     if(sd == -1) {
         fprintf(stderr, "Usage: %s LISTEN_PORT\n", argv[0]);
