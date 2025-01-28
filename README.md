@@ -1,5 +1,4 @@
 # SimpleFTP
-
 Network sockets assignment made for a computer network course.
 
 ## Dependencies
@@ -28,7 +27,7 @@ make
 
 Now, each directory from the source code should have it's respective binary (client example: src/cli/ftpcli).
 
-*For details on the usage it is recommended to use the -h flag on the compiled binary.*
+**For details on the usage it is recommended to use the -h flag on the compiled binary.**
 ```
 ftpsrv -h
 ftpcli -h
@@ -46,6 +45,8 @@ make clean
 The client implements the following commands: put, get, ls, cd and pwd.
 
 ### Server
+**Remember to have an 'ftpusers' file with the \<user:password\> list at the same level than the binary**
+The server(src/srv) folder contains an example.
 The server supports the following commands: STOR, RETR, LIST, CWD, PWD, PASV, PORT.
 
 ### Known issues

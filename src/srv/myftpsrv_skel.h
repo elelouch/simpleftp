@@ -44,6 +44,8 @@
 #define MSG_550 "550 %s: no such file or directory\r\n"
 
 char usage_msg[] = "Usage: %s LISTEN_PORT\n\n"
+                    "Remember to create the 'ftpusers' file with the <user:password> list"
+                    "at the same level than the binary. The server folder(src/srv) contains an example."
                     "Commands supported: RETR, CWD, STOR, PASV, PORT, LIST, QUIT\n";
 
 struct sess_stats {
