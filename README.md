@@ -45,9 +45,13 @@ make clean
 The client implements the following commands: put, get, ls, cd and pwd.
 
 ### Server
-**Remember to have an 'ftpusers' file with the \<user:password\> list at the same level than the binary**
+**Remember to create a 'ftpusers' file with the \<user:password\> list at the same level than the binary**. Use the following command to create one.
+```
+echo 'YOURUSERNAME:YOURPASSWORD' > ftpusers
+```
 The server(src/srv) folder contains an example.
 The server supports the following commands: STOR, RETR, LIST, CWD, PWD, PASV, PORT.
+
 
 ### Known issues
 Overall, the implementation was made for demonstration purposes. 

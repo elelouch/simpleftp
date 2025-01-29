@@ -511,7 +511,7 @@ void store(char *filename, struct conn_stats *stats)
     }
 
     while((bread = fread(buffer, sizeof(char), BUFSIZE, send_file)) > 0) {
-        write(data_sd, buffer, BUFSIZE);
+        write(data_sd, buffer, bread);
     }
 
     close(data_sd);
