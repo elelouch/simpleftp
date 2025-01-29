@@ -211,8 +211,6 @@ void retr(struct sess_stats *stats, char *file_path)
     close(stats -> data_chnl);
     stats -> data_chnl = 0;
     fclose(file);
-
-    exit(EXIT_SUCCESS);
 }
 
 int check_credentials(char *user, char *pass)
