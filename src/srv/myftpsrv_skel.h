@@ -22,7 +22,7 @@
 #define PORTLEN 5 + 1 // (2^16 = 65536, 5 caracteres maximo) + '\0'
 
 #define USAGE_MSG 
-#define MSG_150 "Opening BINARY mode data connection for %s (%d bytes).\r\n"
+#define MSG_150 "150 Opening BINARY mode data connection for %s (%d bytes).\r\n"
 #define MSG_125 "125 Data connection open, starting transfer\r\n"
 #define MSG_200 "200 %s Command OK\r\n"
 #define MSG_211 "211 - RETR <path>: retrieve a file\r\n"
@@ -45,7 +45,7 @@
 
 char usage_msg[] = "Usage: %s LISTEN_PORT\n\n"
                     "Remember to create the 'ftpusers' file with the <user:password> list"
-                    "at the same level than the binary. The server folder(src/srv) contains an example."
+                    " at the same level than the binary. The server folder(src/srv) contains an example.\n"
                     "Commands supported: RETR, CWD, STOR, PASV, PORT, LIST, QUIT\n";
 
 struct sess_stats {

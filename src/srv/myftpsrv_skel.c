@@ -1,7 +1,9 @@
 #include "myftpsrv_skel.h"
 #include <bits/getopt_core.h>
+#include <linux/limits.h>
 #include <netinet/in.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -160,25 +162,26 @@ int recv_cmd(int sd, char *operation, char *param)
 void retr(struct sess_stats *stats, char *file_path)
 {
     FILE *file;
-    int bread;
+    int bread, cmd_sd = 0;
     long fsize;
+    char full_path[PATH_MAX];
     char buffer[BUFSIZE];
-    char full_file_path[PATH_MAX] = {'\0'};
 
-    if(!stats) {
+    if(!stats || !stats -> cmd_chnl) {
         fprintf(stderr, "retr:Invalid arguments, cmd or data channel not available\n");
         return;
     }
 
-    // check if file exists if not inform error to client
-    getcwd(full_file_path, PATH_MAX);
-    strcat(full_file_path, "/files");
-    strcat(full_file_path, "/");
-    strcat(full_file_path, file_path);
+    getcwd(full_path, PATH_MAX);
+    strcat(full_path, "/");
+    strcat(full_path, file_path);
 
-    file = fopen(full_file_path, "r");
+    cmd_sd = stats -> cmd_chnl;
+
+    file = fopen(full_path, "rb");
+
     if (!file) {
-        send_ans(stats -> cmd_chnl, MSG_550); // TODO: suggest to use LIST command
+        send_ans(cmd_sd, MSG_550, file_path); 
         return;
     }
 
@@ -187,19 +190,22 @@ void retr(struct sess_stats *stats, char *file_path)
     fsize = ftell(file);
     fseek(file, 0L, SEEK_SET);
     // send_ans(cmd_chnl, MSG_299, file_path, fsize);
-    send_ans(stats -> cmd_chnl, MSG_150, file_path, fsize);
+    send_ans(cmd_sd, MSG_150, file_path, fsize);
 
     // important delay to avoid problems with buffer size
     sleep(1);
 
     // send the file
-    while ((bread = fread(buffer, sizeof(char), BUFSIZE, file))) 
-        write(stats -> data_chnl, buffer, BUFSIZE);
+    while ((bread = fread(buffer, sizeof(char), BUFSIZE, file)) > 0) {
+        if(write(stats -> data_chnl, buffer, bread) == -1) {
+            perror("retr write");
+        }
+    }
 
     if (ferror(file))
-        send_ans(stats -> cmd_chnl, "Error while reading %s", file_path);
+        send_ans(cmd_sd, "Error while reading %s", file_path);
     else
-        send_ans(stats -> cmd_chnl, MSG_226);
+        send_ans(cmd_sd, MSG_226);
 
     // close the file
     close(stats -> data_chnl);
@@ -304,6 +310,8 @@ void operate(int sd)
             cd(&stats, param);
         } else if (strncmp(op, "STOR", 4) == 0) {
             store(&stats, param);
+        } else if (strncmp(op, "TYPE", 4) == 0) {
+            send_ans(sd, MSG_200, "TYPE");
         } else {
             send_ans(sd, MSG_502);
         }
@@ -483,7 +491,7 @@ void store(struct sess_stats *stats, char *filename)
     FILE *new_file = NULL;
     int bread = 0;
 
-    new_file = fopen(filename, "w");
+    new_file = fopen(filename, "wb");
 
     if(!new_file) {
         send_ans(stats -> cmd_chnl, MSG_501);
