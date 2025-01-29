@@ -372,7 +372,7 @@ int handle_port(struct conn_stats *stats)
 
     send_msg(stats -> cmd_chnl, "PORT", generate_port_res(port, ip_addr, buff));
 
-    if(recv_msg(stats, NULL) / 200 != 2) {
+    if(recv_msg(stats, NULL) / 100 != 2) {
         fprintf(stderr, "dataconn: OK code not received after PORT command\n");
         close(data_sd);
         return -1;
